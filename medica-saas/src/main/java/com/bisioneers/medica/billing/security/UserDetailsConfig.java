@@ -7,14 +7,16 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 @Configuration
 public class UserDetailsConfig {
 
     @Bean
-    public UserDetailsService userDetailsService() {
+    public UserDetailsService userDetailsService(PasswordEncoder passwordEncoder) {
         return username -> {
 
+            UUID userId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
             UUID tenantId = UUID.fromString("11111111-1111-1111-1111-111111111111");
 
             var authorities = List.of(
@@ -22,12 +24,13 @@ public class UserDetailsConfig {
             );
 
             return new StaffUserPrincipal(
+                userId,
                 tenantId,
+                "demo-tenant",
                 "admin@demo.com",
-                "{noop}admin123", // SOLO DEV
+                passwordEncoder.encode("admin123"), // SOLO DEV
                 authorities
             );
         };
     }
 }
-
