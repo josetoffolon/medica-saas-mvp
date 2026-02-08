@@ -1,12 +1,11 @@
 package com.bisioneers.medica.billing.security;
 
-import java.util.Collection;
-import java.util.UUID;
-
+import com.bisioneers.medica.billing.domain.TenantAware;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
-import com.bisioneers.medica.billing.domain.TenantAware;
+import java.util.Collection;
+import java.util.UUID;
 
 public class StaffUserPrincipal implements UserDetails, TenantAware {
 

@@ -1,6 +1,7 @@
 package com.bisioneers.medica.billing.security;
 
 import java.nio.charset.StandardCharsets;
+import java.security.Key;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
@@ -8,8 +9,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-
-import javax.crypto.SecretKey;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -22,7 +21,7 @@ import io.jsonwebtoken.security.Keys;
 @Service
 public class JwtService {
 
-    private final SecretKey signingKey;
+    private final Key signingKey;
     private final long expirationMinutes;
 
     public JwtService(@Value("${security.jwt.secret}") String secret,
@@ -56,11 +55,11 @@ public class JwtService {
     }
 
     public Claims parseToken(String token) throws JwtException {
-        return Jwts.parser()
-            .verifyWith(signingKey)
+        return Jwts.parserBuilder()
+            .setSigningKey(signingKey)
             .build()
-            .parseSignedClaims(token)
-            .getPayload();
+            .parseClaimsJws(token)
+            .getBody();
     }
 
     public StaffUserPrincipal toPrincipal(Claims claims) {
