@@ -55,11 +55,11 @@ public class JwtService {
     }
 
     public Claims parseToken(String token) throws JwtException {
-        return Jwts.parser()
-            .verifyWith(signingKey)
+        return Jwts.parserBuilder()
+            .setSigningKey(signingKey)
             .build()
-            .parseSignedClaims(token)
-            .getPayload();
+            .parseClaimsJws(token)
+            .getBody();
     }
 
     public StaffUserPrincipal toPrincipal(Claims claims) {
