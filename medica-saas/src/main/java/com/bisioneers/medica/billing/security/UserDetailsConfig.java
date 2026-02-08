@@ -11,23 +11,23 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 @Configuration
 public class UserDetailsConfig {
 
-    @Bean
-    public UserDetailsService userDetailsService() {
-        return username -> {
+  @Bean
+  public UserDetailsService userDetailsService() {
+    return username -> {
 
-            UUID tenantId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+      UUID userId   = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+      UUID tenantId = UUID.fromString("11111111-1111-1111-1111-111111111111");
 
-            var authorities = List.of(
-                new SimpleGrantedAuthority("ROLE_MEDICO")
-            );
+      var authorities = List.of(new SimpleGrantedAuthority("ROLE_MEDICO"));
 
-            return new StaffUserPrincipal(
-                tenantId,
-                "admin@demo.com",
-                "{noop}admin123", // SOLO DEV
-                authorities
-            );
-        };
-    }
+      return new StaffUserPrincipal(
+          userId,
+          tenantId,
+          "admin@demo.com",
+          "{noop}admin123", // SOLO DEV
+          true,
+          authorities
+      );
+    };
+  }
 }
-
