@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" ng-app="medicaLoginApp">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Medica SaaS | Panel del Médico</title>
+    <title>Medica SaaS | Login</title>
     <link rel="stylesheet" href="styles.css" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -13,142 +13,73 @@
     />
   </head>
   <body>
-    <header class="topbar">
-      <div class="brand">
-        <div class="brand__logo">MS</div>
-        <div>
-          <p class="brand__name">Medica SaaS</p>
-          <p class="brand__tag">Arquitectura cliente-servidor · Spring Boot + Tomcat</p>
-        </div>
-      </div>
-      <nav class="topbar__nav">
-        <a href="#agenda">Agenda</a>
-        <a href="#pacientes">Pacientes</a>
-        <a href="#servicios">Servicios</a>
-        <button class="button button--ghost">Renovar suscripción</button>
-      </nav>
-    </header>
-
-    <main>
-      <section class="hero">
-        <div>
-          <p class="pill">MVP SaaS médico-estético</p>
-          <h1>Gestiona tu práctica con una vista clara de agenda, pacientes y pagos.</h1>
-          <p class="hero__subtitle">
-            Panel sencillo y profesional para citas, historial clínico y promociones. Con recordatorios y enlaces a
-            WhatsApp para comunicación rápida.
-          </p>
-          <div class="hero__actions">
-            <button class="button">Crear nueva cita</button>
-            <button class="button button--secondary">Ver historial clínico</button>
-            <button class="button button--ghost">Portal del paciente</button>
-          </div>
-          <div class="status-card">
-            <div>
-              <p class="status-card__label">Estado de suscripción</p>
-              <p class="status-card__value" id="subscriptionStatus">ACTIVA</p>
-              <p class="status-card__meta">Periodo actual: <span id="subscriptionPeriod">01 Mar - 31 Mar</span></p>
-            </div>
-            <button class="button button--ghost" id="renewButton">Renovar ahora</button>
-          </div>
-        </div>
-        <div class="hero__panel">
-          <div class="panel-card" id="agenda">
-            <h3>Agenda del día</h3>
-            <ul class="panel-card__list">
-              <li>
-                <span>09:30</span>
-                <strong>Carla Mendoza</strong>
-                <small>Dermapen · Confirmada</small>
-              </li>
-              <li>
-                <span>11:00</span>
-                <strong>Marcos Salas</strong>
-                <small>Botox · Pendiente</small>
-              </li>
-              <li>
-                <span>15:15</span>
-                <strong>Lucía Pérez</strong>
-                <small>Limpieza facial · Confirmada</small>
-              </li>
-            </ul>
-            <button class="button button--link">Ver calendario completo</button>
-          </div>
-          <div class="panel-card" id="pacientes">
-            <h3>Pacientes destacados</h3>
-            <div class="patient">
-              <div>
-                <p class="patient__name">Paola Reyes</p>
-                <p class="patient__meta">Última visita: 20 Feb · Progreso 75%</p>
-              </div>
-              <button class="button button--ghost">Ver evolución</button>
-            </div>
-            <div class="patient">
-              <div>
-                <p class="patient__name">Andrés Lozano</p>
-                <p class="patient__meta">Última visita: 18 Feb · Progreso 60%</p>
-              </div>
-              <button class="button button--ghost">Ver evolución</button>
-            </div>
-            <div class="patient__audit">
-              <p class="patient__meta">Auditoría activada · Consentimiento de fotos requerido</p>
-            </div>
-          </div>
-        </div>
+    <main class="login-layout" ng-controller="LoginController as vm">
+      <section class="login-branding">
+        <p class="pill">MVP SaaS médico-estético</p>
+        <h1>Bienvenido a Medica SaaS</h1>
+        <p>
+          Ingresa con tu cuenta para gestionar agenda, pacientes y suscripciones desde un panel único.
+        </p>
+        <ul class="branding-list">
+          <li>Agenda con recordatorios por WhatsApp.</li>
+          <li>Historial clínico con fotos antes y después.</li>
+          <li>Control de suscripción por médico.</li>
+        </ul>
       </section>
 
-      <section class="grid">
-        <article class="feature-card">
-          <h3>Historial clínico con fotos</h3>
-          <p>
-            Guarda notas de texto libre y fotos antes/después (2 por visita) con comparador lado a lado.
-          </p>
-        </article>
-        <article class="feature-card">
-          <h3>Recordatorios automatizados</h3>
-          <p>
-            Programa notificaciones por email y WhatsApp (Twilio) a 24h y 2h antes de la cita.
-          </p>
-        </article>
-        <article class="feature-card">
-          <h3>Suscripción mensual simple</h3>
-          <p>
-            Cobros recurrentes por médico. Acceso bloqueado si la suscripción no está activa.
-          </p>
-        </article>
-        <article class="feature-card" id="servicios">
-          <h3>Servicios y promociones</h3>
-          <p>Catálogo público con promociones y un portal con login para ver citas.</p>
-          <button class="button button--secondary">Ver catálogo público</button>
-        </article>
-        <article class="feature-card">
-          <h3>Agenda con reglas claras</h3>
-          <p>Duración por servicio, bloqueos por día/feriados y citas recurrentes sin choques de horario.</p>
-        </article>
-        <article class="feature-card">
-          <h3>Auditoría y cumplimiento</h3>
-          <p>Registro de cambios en historial, fotos y citas con consentimiento del paciente.</p>
-        </article>
-      </section>
+      <section class="login-card" aria-label="Formulario de inicio de sesión">
+        <div class="brand">
+          <div class="brand__logo">MS</div>
+          <div>
+            <p class="brand__name">Medica SaaS</p>
+            <p class="brand__tag">Panel del Médico</p>
+          </div>
+        </div>
 
-      <section class="cta">
-        <div>
-          <h2>Conecta con tus pacientes en un clic</h2>
-          <p>WhatsApp Business API y cobros al paciente se habilitan en la siguiente fase.</p>
-        </div>
-        <div class="cta__actions">
-          <a class="button" href="https://wa.me/000000000" target="_blank" rel="noreferrer">
-            Abrir WhatsApp
-          </a>
-          <button class="button button--ghost">Configurar pagos</button>
-        </div>
+        <h2>Iniciar sesión</h2>
+
+        <form name="loginForm" ng-submit="vm.login(loginForm)" novalidate>
+          <label for="username">Usuario</label>
+          <input
+            id="username"
+            name="username"
+            type="text"
+            autocomplete="username"
+            ng-model="vm.credentials.username"
+            required
+            ng-minlength="4"
+            placeholder="doctor@clinica.com"
+          />
+          <small class="field-error" ng-if="loginForm.username.$touched && loginForm.username.$invalid">
+            Ingresa un usuario válido (mínimo 4 caracteres).
+          </small>
+
+          <label for="password">Contraseña</label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            ng-model="vm.credentials.password"
+            required
+            ng-minlength="6"
+            placeholder="••••••••"
+          />
+          <small class="field-error" ng-if="loginForm.password.$touched && loginForm.password.$invalid">
+            La contraseña debe tener mínimo 6 caracteres.
+          </small>
+
+          <button class="button" type="submit" ng-disabled="vm.loading">
+            {{ vm.loading ? 'Ingresando...' : 'Entrar al panel' }}
+          </button>
+
+          <p class="status status--ok" ng-if="vm.successMessage">{{ vm.successMessage }}</p>
+          <p class="status status--error" ng-if="vm.errorMessage">{{ vm.errorMessage }}</p>
+        </form>
       </section>
     </main>
 
-    <footer class="footer">
-      <p>© 2025 Medica SaaS. Panel MVP basado en Spring Boot + Tomcat.</p>
-    </footer>
-
+    <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.3/angular.min.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
