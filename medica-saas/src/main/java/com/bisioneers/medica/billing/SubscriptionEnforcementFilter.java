@@ -107,15 +107,10 @@ public class SubscriptionEnforcementFilter extends OncePerRequestFilter {
 
 
     private UUID extractTenantId(Object principal) {
-    	  if (principal instanceof com.bisioneers.medica.billing.domain.TenantAware ta) {
-    	    return ta.getTenantId();
-    	  }
-    	  if (principal instanceof org.springframework.security.oauth2.jwt.Jwt jwt) {
-    	    String tenantId = jwt.getClaimAsString("tenantId");
-    	    if (tenantId != null) return UUID.fromString(tenantId);
-    	  }
+    	  if (principal instanceof TenantAware ta) return ta.getTenantId();
     	  return null;
     	}
+
 
 }
 

@@ -1,22 +1,17 @@
 package com.bisioneers.medica.billing.security;
 
-import java.nio.charset.StandardCharsets;
-import java.security.Key;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.stereotype.Service;
+
+import java.nio.charset.StandardCharsets;
+import java.security.Key;
+import java.time.Instant;
+import java.util.*;
 
 @Service
 public class JwtService {
@@ -41,48 +36,59 @@ public class JwtService {
         claims.put("tenantId", principal.getTenantId().toString());
         claims.put("userId", principal.getUserId().toString());
         claims.put("roles", principal.getAuthorities().stream().map(a -> a.getAuthority()).toList());
-        if (!principal.getTenantAlias().isBlank()) {
-            claims.put("tenantAlias", principal.getTenantAlias());
+
+        String tenantAlias = principal.getTenantAlias();
+        if (tenantAlias != null && !tenantAlias.isBlank()) {
+            claims.put("tenantAlias", tenantAlias);
         }
 
         return Jwts.builder()
-            .setSubject(principal.getUsername())
-            .setIssuedAt(Date.from(now))
-            .setExpiration(Date.from(expiresAt))
-            .addClaims(claims)
-            .signWith(signingKey)
-            .compact();
+                .setSubject(principal.getUsername()) // email
+                .setIssuedAt(Date.from(now))
+                .setExpiration(Date.from(expiresAt))
+                .addClaims(claims)
+                .signWith(signingKey)
+                .compact();
     }
 
     public Claims parseToken(String token) throws JwtException {
         return Jwts.parserBuilder()
-            .setSigningKey(signingKey)
-            .build()
-            .parseClaimsJws(token)
-            .getBody();
+                .setSigningKey(signingKey)
+                .build()
+                .parseClaimsJws(token)
+                .getBody();
     }
 
     public StaffUserPrincipal toPrincipal(Claims claims) {
         String username = claims.getSubject();
+
         UUID tenantId = UUID.fromString(claims.get("tenantId", String.class));
-        String tenantAlias = claims.get("tenantAlias", String.class);
         UUID userId = UUID.fromString(claims.get("userId", String.class));
 
-        List<String> roles = claims.get("roles", List.class);
-        if (roles == null) {
-            roles = new ArrayList<>();
+        String tenantAlias = claims.get("tenantAlias", String.class);
+        if (tenantAlias == null) tenantAlias = "";
+
+        // roles puede venir como List<?> -> normalizamos a List<String>
+        List<?> rawRoles = claims.get("roles", List.class);
+        List<String> roles = new ArrayList<>();
+        if (rawRoles != null) {
+            for (Object r : rawRoles) {
+                if (r != null) roles.add(r.toString());
+            }
         }
+
         var authorities = roles.stream()
-            .map(org.springframework.security.core.authority.SimpleGrantedAuthority::new)
-            .toList();
+                .map(SimpleGrantedAuthority::new)
+                .toList();
 
         return new StaffUserPrincipal(
-            userId,
-            tenantId,
-            tenantAlias,
-            username,
-            "",
-            authorities
-        );
+        	    userId,
+        	    tenantId,
+        	    tenantAlias,
+        	    username,
+        	    "",      // password vacío en JWT
+        	    true,    // enabled (en JWT no lo validamos; en DB sí)
+        	    authorities
+        	);
     }
 }

@@ -12,8 +12,9 @@ public class StaffUserPrincipal implements UserDetails, TenantAware {
     private final UUID userId;
     private final UUID tenantId;
     private final String tenantAlias;
-    private final String username;
+    private final String username; // email
     private final String password;
+    private final boolean enabled;
     private final Collection<? extends GrantedAuthority> authorities;
 
     public StaffUserPrincipal(
@@ -22,6 +23,7 @@ public class StaffUserPrincipal implements UserDetails, TenantAware {
             String tenantAlias,
             String username,
             String password,
+            boolean enabled,
             Collection<? extends GrantedAuthority> authorities
     ) {
         this.userId = userId;
@@ -29,6 +31,7 @@ public class StaffUserPrincipal implements UserDetails, TenantAware {
         this.tenantAlias = tenantAlias == null ? "" : tenantAlias;
         this.username = username;
         this.password = password;
+        this.enabled = enabled;
         this.authorities = authorities;
     }
 
@@ -42,7 +45,5 @@ public class StaffUserPrincipal implements UserDetails, TenantAware {
     @Override public boolean isAccountNonExpired() { return true; }
     @Override public boolean isAccountNonLocked() { return true; }
     @Override public boolean isCredentialsNonExpired() { return true; }
-    @Override public boolean isEnabled() { return true; }
-
-	
+    @Override public boolean isEnabled() { return enabled; }
 }

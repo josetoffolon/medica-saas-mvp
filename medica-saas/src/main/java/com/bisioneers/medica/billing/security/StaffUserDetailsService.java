@@ -22,9 +22,11 @@ public class StaffUserDetailsService implements UserDetailsService {
 
     var auth = List.of(new SimpleGrantedAuthority("ROLE_" + u.getRole().toUpperCase()));
 
+    // tenantAlias: aún no existe como entidad -> lo dejamos vacío en MVP
     return new StaffUserPrincipal(
         u.getId(),
         u.getTenantId(),
+        "",                  // tenantAlias (MVP)
         u.getEmail(),
         u.getPasswordHash(),
         u.isEnabled(),

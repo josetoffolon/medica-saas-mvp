@@ -1,11 +1,18 @@
 package com.bisioneers.medica.billing.security;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+
+import java.util.List;
+
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.authentication.*;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+
+import com.bisioneers.medica.billing.api.LoginResponse;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -20,16 +27,27 @@ public class AuthController {
   }
 
   @PostMapping("/login")
-  public ResponseEntity<?> login(@RequestBody LoginRequest req) {
-    Authentication auth = authManager.authenticate(
-        new UsernamePasswordAuthenticationToken(req.email(), req.password())
-    );
+  public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
 
-    String token = jwtService.issueStaffToken(auth);
-    return ResponseEntity.ok(new TokenResponse(token, "Bearer"));
+      Authentication authentication = authManager.authenticate(
+          new UsernamePasswordAuthenticationToken(request.email(), request.password())
+      );
+
+      StaffUserPrincipal principal = (StaffUserPrincipal) authentication.getPrincipal();
+      String token = jwtService.generateToken(principal);
+
+      List<String> roles = principal.getAuthorities().stream()
+          .map(a -> a.getAuthority())
+          .toList();
+
+      return ResponseEntity.ok(new LoginResponse(
+          token,
+          "Bearer",
+          principal.getTenantId().toString(),
+          principal.getUserId().toString(),
+          roles
+      ));
   }
 
   public record LoginRequest(@Email @NotBlank String email, @NotBlank String password) {}
-  public record TokenResponse(String accessToken, String tokenType) {}
 }
-
