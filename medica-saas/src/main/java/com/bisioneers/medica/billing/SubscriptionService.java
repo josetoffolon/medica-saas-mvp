@@ -59,7 +59,7 @@ public class SubscriptionService {
 
         // IMPORTANTE: tu entity define lastTransactionId como String o UUID?
         // Por tu error: setLastTransactionId(String) existe, así que guardamos el UUID como String:
-        sub.setLastTransactionId(txId.toString());
+        sub.setLastTransactionId(txId);
 
         subscriptionRepository.save(sub);
     }

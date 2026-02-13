@@ -1,18 +1,16 @@
 package com.bisioneers.medica.billing.security;
 
+import com.bisioneers.medica.billing.api.LoginResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-
-import java.util.List;
-
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
-import com.bisioneers.medica.billing.api.LoginResponse;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -27,26 +25,26 @@ public class AuthController {
   }
 
   @PostMapping("/login")
-  public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
+  public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest req) {
 
-      Authentication authentication = authManager.authenticate(
-          new UsernamePasswordAuthenticationToken(request.email(), request.password())
-      );
+    Authentication authentication = authManager.authenticate(
+        new UsernamePasswordAuthenticationToken(req.email(), req.password())
+    );
 
-      StaffUserPrincipal principal = (StaffUserPrincipal) authentication.getPrincipal();
-      String token = jwtService.generateToken(principal);
+    StaffUserPrincipal principal = (StaffUserPrincipal) authentication.getPrincipal();
+    String token = jwtService.generateToken(principal);
 
-      List<String> roles = principal.getAuthorities().stream()
-          .map(a -> a.getAuthority())
-          .toList();
+    List<String> roles = principal.getAuthorities().stream()
+        .map(a -> a.getAuthority())
+        .toList();
 
-      return ResponseEntity.ok(new LoginResponse(
-          token,
-          "Bearer",
-          principal.getTenantId().toString(),
-          principal.getUserId().toString(),
-          roles
-      ));
+    return ResponseEntity.ok(new LoginResponse(
+        token,
+        "Bearer",
+        principal.getTenantId().toString(),
+        principal.getUserId().toString(),
+        roles
+    ));
   }
 
   public record LoginRequest(@Email @NotBlank String email, @NotBlank String password) {}

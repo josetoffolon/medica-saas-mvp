@@ -2,34 +2,39 @@ package com.bisioneers.medica.billing.security;
 import jakarta.persistence.*;
 import java.util.UUID;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 @Entity
-@Table(name = "staff_user", indexes = {
-    @Index(name="idx_staff_email", columnList="email", unique = true)
-})
+@Table(name = "staff_user",
+       indexes = @Index(name = "idx_staff_email", columnList = "email", unique = true))
 public class StaffUserEntity {
 
-  @Id
-  private UUID id;
+    @Id
+    @JdbcTypeCode(SqlTypes.BINARY)
+    @Column(name = "id", columnDefinition = "BINARY(16)")
+    private UUID id;
 
-  @Column(nullable=false, unique=true, length=160)
-  private String email;
+    @Column(nullable = false, length = 160, unique = true)
+    private String email;
 
-  @Column(nullable=false, length=255)
-  private String passwordHash;
+    @Column(name = "password_hash", nullable = false, length = 255)
+    private String passwordHash;
 
-  @Column(nullable=false, length=20)
-  private String role; // ADMIN|MEDICO|RECEPCION|ASISTENTE
+    @Column(nullable = false, length = 20)
+    private String role;
 
-  @Column(nullable=false)
-  private UUID tenantId; // tenant = médico
+    @JdbcTypeCode(SqlTypes.BINARY)
+    @Column(name = "tenant_id", columnDefinition = "BINARY(16)", nullable = false)
+    private UUID tenantId;
 
-  @Column(nullable=false)
-  private boolean enabled = true;
+    @Column(nullable = false)
+    private boolean enabled = true;
 
-  @PrePersist
-  void prePersist() {
-    if (id == null) id = UUID.randomUUID();
-  }
+    @PrePersist
+    void prePersist() {
+        if (id == null) id = UUID.randomUUID();
+    }
 
   /**
    * @return the id

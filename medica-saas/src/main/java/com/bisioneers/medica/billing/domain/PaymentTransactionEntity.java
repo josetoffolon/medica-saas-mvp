@@ -5,43 +5,49 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 @Entity
 @Table(name = "payment_transaction",
        indexes = {
-           @Index(name="idx_pt_tenant_status", columnList="tenantId,status"),
-           @Index(name="idx_pt_provider_ref", columnList="providerRef", unique = true)
+           @Index(name="idx_pt_tenant_status", columnList="tenant_id,status"),
+           @Index(name="idx_pt_provider_ref", columnList="provider_ref", unique = true)
        })
 public class PaymentTransactionEntity {
 
     @Id
+    @JdbcTypeCode(SqlTypes.BINARY)
+    @Column(columnDefinition = "BINARY(16)")
     private UUID id;
 
-    @Column(nullable = false)
+    @JdbcTypeCode(SqlTypes.BINARY)
+    @Column(name = "tenant_id", columnDefinition = "BINARY(16)", nullable = false)
     private UUID tenantId;
 
     @Column(nullable = false)
-    private String provider; // PAGUELO_FACIL
+    private String provider;
 
-    @Column(unique = true)
-    private String providerRef; // idActivity o codOper si aplica
+    @Column(name = "provider_ref", unique = true)
+    private String providerRef;
 
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal amount;
 
     @Column(nullable = false)
-    private String currency; // USD
+    private String currency;
 
     @Column(nullable = false)
-    private String status; // PENDING, PAID, DECLINED, EXPIRED
+    private String status;
 
     @Lob
-    @Column(columnDefinition = "LONGTEXT")
+    @Column(name = "payload_json", columnDefinition = "LONGTEXT")
     private String payloadJson;
 
-    @Column(nullable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
-    @Column(nullable = false)
+    @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
     @PrePersist

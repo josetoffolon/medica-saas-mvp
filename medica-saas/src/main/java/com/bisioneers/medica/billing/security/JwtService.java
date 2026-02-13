@@ -1,94 +1,33 @@
 package com.bisioneers.medica.billing.security;
 
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.JwtException;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jwt.*;
 import org.springframework.stereotype.Service;
-
-import java.nio.charset.StandardCharsets;
-import java.security.Key;
 import java.time.Instant;
-import java.util.*;
 
 @Service
 public class JwtService {
+    private final JwtEncoder jwtEncoder;
 
-    private final Key signingKey;
-    private final long expirationMinutes;
-
-    public JwtService(@Value("${security.jwt.secret}") String secret,
-                      @Value("${security.jwt.expiration-minutes:60}") long expirationMinutes) {
-        if (secret == null || secret.length() < 32) {
-            throw new IllegalArgumentException("JWT secret must be at least 32 characters");
-        }
-        this.signingKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
-        this.expirationMinutes = expirationMinutes;
+    public JwtService(JwtEncoder jwtEncoder) {
+        this.jwtEncoder = jwtEncoder;
     }
 
     public String generateToken(StaffUserPrincipal principal) {
         Instant now = Instant.now();
-        Instant expiresAt = now.plusSeconds(expirationMinutes * 60);
+        JwtClaimsSet claims = JwtClaimsSet.builder()
+                .issuer("medica-saas")
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(3600))
+                .subject(principal.getUsername())
+                .claim("tenantId", principal.getTenantId().toString())
+                .claim("userId", principal.getUserId().toString())
+                .claim("tenantAlias", principal.getTenantAlias())
+                .claim("roles", principal.getAuthorities().stream().map(a -> a.getAuthority()).toList())
+                .build();
 
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("tenantId", principal.getTenantId().toString());
-        claims.put("userId", principal.getUserId().toString());
-        claims.put("roles", principal.getAuthorities().stream().map(a -> a.getAuthority()).toList());
-
-        String tenantAlias = principal.getTenantAlias();
-        if (tenantAlias != null && !tenantAlias.isBlank()) {
-            claims.put("tenantAlias", tenantAlias);
-        }
-
-        return Jwts.builder()
-                .setSubject(principal.getUsername()) // email
-                .setIssuedAt(Date.from(now))
-                .setExpiration(Date.from(expiresAt))
-                .addClaims(claims)
-                .signWith(signingKey)
-                .compact();
-    }
-
-    public Claims parseToken(String token) throws JwtException {
-        return Jwts.parserBuilder()
-                .setSigningKey(signingKey)
-                .build()
-                .parseClaimsJws(token)
-                .getBody();
-    }
-
-    public StaffUserPrincipal toPrincipal(Claims claims) {
-        String username = claims.getSubject();
-
-        UUID tenantId = UUID.fromString(claims.get("tenantId", String.class));
-        UUID userId = UUID.fromString(claims.get("userId", String.class));
-
-        String tenantAlias = claims.get("tenantAlias", String.class);
-        if (tenantAlias == null) tenantAlias = "";
-
-        // roles puede venir como List<?> -> normalizamos a List<String>
-        List<?> rawRoles = claims.get("roles", List.class);
-        List<String> roles = new ArrayList<>();
-        if (rawRoles != null) {
-            for (Object r : rawRoles) {
-                if (r != null) roles.add(r.toString());
-            }
-        }
-
-        var authorities = roles.stream()
-                .map(SimpleGrantedAuthority::new)
-                .toList();
-
-        return new StaffUserPrincipal(
-        	    userId,
-        	    tenantId,
-        	    tenantAlias,
-        	    username,
-        	    "",      // password vacío en JWT
-        	    true,    // enabled (en JWT no lo validamos; en DB sí)
-        	    authorities
-        	);
+        //IMPORTANTE: Header con HS256 para que Nimbus seleccione la key HMAC
+        JwsHeader jwsHeader = JwsHeader.with(MacAlgorithm.HS256).type("JWT").build();
+        return jwtEncoder.encode(JwtEncoderParameters.from(jwsHeader, claims)).getTokenValue();
     }
 }

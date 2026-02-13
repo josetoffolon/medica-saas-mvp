@@ -9,38 +9,65 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.server.resource.authentication.*;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 @Configuration
 public class SecurityConfig {
 
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http,
-                                    SubscriptionEnforcementFilter subFilter,
-                                    JwtAuthenticationFilter jwtAuthenticationFilter) throws Exception {
+                                    SubscriptionEnforcementFilter subFilter) throws Exception {
+    	//System.out.println(new BCryptPasswordEncoder().encode("admin1231"));
 
-    	http
-    	  .csrf(csrf -> csrf.disable())
-    	  .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-    	  .authorizeHttpRequests(auth -> auth
-    	      .requestMatchers("/api/public/**", "/api/auth/**", "/billing/return", "/api/billing/webhook/**",
-    	                       "/swagger-ui/**", "/v3/api-docs/**").permitAll()
-    	      .anyRequest().authenticated()
-    	  )
-    	  .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
-    	  .addFilterAfter(subFilter, JwtAuthenticationFilter.class);
+        http
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session ->
+                    session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+            )
+            .authorizeHttpRequests(auth -> auth
+                    .requestMatchers(
+                            "/api/auth/**",
+                            "/api/public/**",
+                            "/billing/return",
+                            "/api/billing/webhook/**",
+                            "/swagger-ui/**",
+                            "/v3/api-docs/**"
+                    ).permitAll()
+                    .anyRequest().authenticated()
+            )
+            .oauth2ResourceServer(oauth ->
+                    oauth.jwt(jwt ->
+                            jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())
+                    )
+            )
+            .addFilterAfter(subFilter, org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class);
 
         return http.build();
     }
 
     @Bean
-    PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+    public JwtAuthenticationConverter jwtAuthenticationConverter() {
+
+        JwtGrantedAuthoritiesConverter rolesConverter = new JwtGrantedAuthoritiesConverter();
+        rolesConverter.setAuthoritiesClaimName("roles");
+        rolesConverter.setAuthorityPrefix("");
+
+        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(rolesConverter);
+
+        return converter;
     }
 
     @Bean
-    AuthenticationManager authenticationManager(AuthenticationConfiguration configuration) throws Exception {
-        return configuration.getAuthenticationManager();
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
+        return config.getAuthenticationManager();
     }
+    
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+      return new BCryptPasswordEncoder();
+      
+    }
+    
 }
