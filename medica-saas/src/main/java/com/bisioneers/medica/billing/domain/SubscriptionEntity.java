@@ -6,6 +6,9 @@ import java.util.UUID;
 
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
+
+import com.bisioneers.medica.billing.audit.AuditedEntity;
+
 import jakarta.persistence.Index;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -17,7 +20,7 @@ import jakarta.persistence.Table;
 @Entity
 @Table(name = "subscription",
        indexes = @Index(name="idx_subscription_status", columnList="status"))
-public class SubscriptionEntity {
+public class SubscriptionEntity extends AuditedEntity {
 
     @Id
     @JdbcTypeCode(SqlTypes.BINARY)

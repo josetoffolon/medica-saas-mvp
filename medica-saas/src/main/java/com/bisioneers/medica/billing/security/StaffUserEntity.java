@@ -5,10 +5,12 @@ import java.util.UUID;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import com.bisioneers.medica.billing.audit.AuditedEntity;
+
 @Entity
 @Table(name = "staff_user",
        indexes = @Index(name = "idx_staff_email", columnList = "email", unique = true))
-public class StaffUserEntity {
+public class StaffUserEntity extends AuditedEntity{
 
     @Id
     @JdbcTypeCode(SqlTypes.BINARY)

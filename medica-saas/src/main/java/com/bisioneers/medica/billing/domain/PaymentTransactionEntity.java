@@ -1,6 +1,8 @@
 package com.bisioneers.medica.billing.domain;
 
+import com.bisioneers.medica.billing.tenant.TenantScopedEntity;
 import jakarta.persistence.*;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
@@ -10,138 +12,172 @@ import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "payment_transaction",
-       indexes = {
-           @Index(name="idx_pt_tenant_status", columnList="tenant_id,status"),
-           @Index(name="idx_pt_provider_ref", columnList="provider_ref", unique = true)
-       })
-public class PaymentTransactionEntity {
-
-    @Id
-    @JdbcTypeCode(SqlTypes.BINARY)
-    @Column(columnDefinition = "BINARY(16)")
-    private UUID id;
-
-    @JdbcTypeCode(SqlTypes.BINARY)
-    @Column(name = "tenant_id", columnDefinition = "BINARY(16)", nullable = false)
-    private UUID tenantId;
-
-    @Column(nullable = false)
-    private String provider;
-
-    @Column(name = "provider_ref", unique = true)
-    private String providerRef;
-
-    @Column(nullable = false, precision = 10, scale = 2)
-    private BigDecimal amount;
-
-    @Column(nullable = false)
-    private String currency;
-
-    @Column(nullable = false)
-    private String status;
-
-    @Lob
-    @Column(name = "payload_json", columnDefinition = "LONGTEXT")
-    private String payloadJson;
-
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private Instant createdAt;
-
-    @Column(name = "updated_at", nullable = false)
-    private Instant updatedAt;
-
-    @PrePersist
-    void prePersist() {
-        Instant now = Instant.now();
-        if (createdAt == null) createdAt = now;
-        updatedAt = now;
+    indexes = {
+        @Index(name="idx_pt_tenant_status", columnList="tenant_id,status"),
+        @Index(name="idx_pt_provider_ref", columnList="provider_ref", unique = true)
     }
+)
+public class PaymentTransactionEntity extends TenantScopedEntity {
 
-    @PreUpdate
-    void preUpdate() {
-        updatedAt = Instant.now();
-    }
+  @Id
+  @JdbcTypeCode(SqlTypes.BINARY)
+  @Column(name = "id", nullable = false, columnDefinition = "BINARY(16)")
+  private UUID id;
 
-	public UUID getId() {
-		return id;
-	}
+  @Column(nullable = false, precision = 10, scale = 2)
+  private BigDecimal amount;
 
-	public void setId(UUID id) {
-		this.id = id;
-	}
+  @Column(nullable = false)
+  private String currency;
 
-	public UUID getTenantId() {
-		return tenantId;
-	}
+  @Column(nullable = false)
+  private String provider;
 
-	public void setTenantId(UUID tenantId) {
-		this.tenantId = tenantId;
-	}
+  @Column(name="provider_ref", unique = true)
+  private String providerRef;
 
-	public String getProvider() {
-		return provider;
-	}
+  @Column(nullable = false)
+  private String status;
 
-	public void setProvider(String provider) {
-		this.provider = provider;
-	}
+  @Lob
+  @Column(name="payload_json", columnDefinition="LONGTEXT")
+  private String payloadJson;
 
-	public String getProviderRef() {
-		return providerRef;
-	}
+  @Column(name="created_at", nullable = false, updatable = false)
+  private Instant createdAt;
 
-	public void setProviderRef(String providerRef) {
-		this.providerRef = providerRef;
-	}
+  @Column(name="updated_at", nullable = false)
+  private Instant updatedAt;
+  
+  @PrePersist
+  void prePersistI(){
+	  if (id==null) id = UUID.randomUUID();
+  }
 
-	public BigDecimal getAmount() {
-		return amount;
-	}
+  /**
+   * @return the id
+   */
+  public UUID getId() {
+	return id;
+  }
 
-	public void setAmount(BigDecimal amount) {
-		this.amount = amount;
-	}
+  /**
+   * @param id the id to set
+   */
+  public void setId(UUID id) {
+	this.id = id;
+  }
 
-	public String getCurrency() {
-		return currency;
-	}
+  /**
+   * @return the amount
+   */
+  public BigDecimal getAmount() {
+	return amount;
+  }
 
-	public void setCurrency(String currency) {
-		this.currency = currency;
-	}
+  /**
+   * @param amount the amount to set
+   */
+  public void setAmount(BigDecimal amount) {
+	this.amount = amount;
+  }
 
-	public String getStatus() {
-		return status;
-	}
+  /**
+   * @return the currency
+   */
+  public String getCurrency() {
+	return currency;
+  }
 
-	public void setStatus(String status) {
-		this.status = status;
-	}
+  /**
+   * @param currency the currency to set
+   */
+  public void setCurrency(String currency) {
+	this.currency = currency;
+  }
 
-	public String getPayloadJson() {
-		return payloadJson;
-	}
+  /**
+   * @return the provider
+   */
+  public String getProvider() {
+	return provider;
+  }
 
-	public void setPayloadJson(String payloadJson) {
-		this.payloadJson = payloadJson;
-	}
+  /**
+   * @param provider the provider to set
+   */
+  public void setProvider(String provider) {
+	this.provider = provider;
+  }
 
-	public Instant getCreatedAt() {
-		return createdAt;
-	}
+  /**
+   * @return the providerRef
+   */
+  public String getProviderRef() {
+	return providerRef;
+  }
 
-	public void setCreatedAt(Instant createdAt) {
-		this.createdAt = createdAt;
-	}
+  /**
+   * @param providerRef the providerRef to set
+   */
+  public void setProviderRef(String providerRef) {
+	this.providerRef = providerRef;
+  }
 
-	public Instant getUpdatedAt() {
-		return updatedAt;
-	}
+  /**
+   * @return the status
+   */
+  public String getStatus() {
+	return status;
+  }
 
-	public void setUpdatedAt(Instant updatedAt) {
-		this.updatedAt = updatedAt;
-	}
+  /**
+   * @param status the status to set
+   */
+  public void setStatus(String status) {
+	this.status = status;
+  }
 
-    
+  /**
+   * @return the payloadJson
+   */
+  public String getPayloadJson() {
+	return payloadJson;
+  }
+
+  /**
+   * @param payloadJson the payloadJson to set
+   */
+  public void setPayloadJson(String payloadJson) {
+	this.payloadJson = payloadJson;
+  }
+
+  /**
+   * @return the createdAt
+   */
+  public Instant getCreatedAt() {
+	return createdAt;
+  }
+
+  /**
+   * @param createdAt the createdAt to set
+   */
+  public void setCreatedAt(Instant createdAt) {
+	this.createdAt = createdAt;
+  }
+
+  /**
+   * @return the updatedAt
+   */
+  public Instant getUpdatedAt() {
+	return updatedAt;
+  }
+
+  /**
+   * @param updatedAt the updatedAt to set
+   */
+  public void setUpdatedAt(Instant updatedAt) {
+	this.updatedAt = updatedAt;
+  }
+  
 }
-

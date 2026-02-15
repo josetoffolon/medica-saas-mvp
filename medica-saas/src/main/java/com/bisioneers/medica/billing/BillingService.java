@@ -1,8 +1,9 @@
 package com.bisioneers.medica.billing;
 
-import com.bisioneers.medica.billing.domain.PaymentTransactionEntity;
 import com.bisioneers.medica.billing.domain.PaymentTransactionRepository;
 import com.bisioneers.medica.billing.pf.PagueloFacilLinkClient;
+import com.bisioneers.medica.billing.domain.PaymentTransactionEntity;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
