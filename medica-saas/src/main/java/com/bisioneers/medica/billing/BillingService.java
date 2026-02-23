@@ -1,14 +1,15 @@
 package com.bisioneers.medica.billing;
 
+import com.bisioneers.medica.billing.domain.PaymentTransactionEntity;
 import com.bisioneers.medica.billing.domain.PaymentTransactionRepository;
 import com.bisioneers.medica.billing.pf.PagueloFacilLinkClient;
-import com.bisioneers.medica.billing.domain.PaymentTransactionEntity;
-
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Instant;
 import java.util.UUID;
 
 @Service
@@ -27,7 +28,8 @@ public class BillingService {
             PagueloFacilLinkClient linkClient,
             @Value("${billing.subscription-amount}") BigDecimal subscriptionAmount,
             @Value("${billing.currency:USD}") String currency,
-            @Value("${app.return-url}") String returnUrl, SubscriptionService subscriptionService
+            @Value("${app.return-url}") String returnUrl,
+            SubscriptionService subscriptionService
     ) {
         this.txRepo = txRepo;
         this.linkClient = linkClient;
@@ -37,8 +39,14 @@ public class BillingService {
         this.subscriptionService = subscriptionService;
     }
 
+    /**
+     * Crea transacción PENDING y genera link de pago en PF.
+     * - Guarda payload sin pisar (append)
+     * - Si PF falla: marca ERROR + registra error en payload y relanza excepción
+     */
     @Transactional
     public CheckoutResponse startCheckout(UUID tenantId, String tenantAlias) {
+
         PaymentTransactionEntity tx = new PaymentTransactionEntity();
         tx.setId(UUID.randomUUID());
         tx.setTenantId(tenantId);
@@ -48,73 +56,115 @@ public class BillingService {
         tx.setStatus("PENDING");
         txRepo.save(tx);
 
-        String desc = "Suscripción mensual - " + tenantAlias + " - " + tx.getId();
-
-        String amt = subscriptionAmount.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
+        String desc = "Suscripción mensual - " + (tenantAlias == null ? "" : tenantAlias) + " - " + tx.getId();
+        String amt = subscriptionAmount.setScale(2, RoundingMode.HALF_UP).toPlainString();
 
         var cmd = new PagueloFacilLinkClient.CreateLinkCommand(
                 amt,
                 desc,
                 returnUrl,
-                tx.getId().toString(),       // PARM_1 = transactionId
-                tenantId.toString()          // PARM_2 = tenantId
+                tx.getId().toString(), // PARM_1 = transactionId
+                tenantId.toString()    // PARM_2 = tenantId
         );
 
-        var result = linkClient.createPaymentLink(cmd);
+        try {
+            var result = linkClient.createPaymentLink(cmd);
 
-        // Guardar payload (y opcionalmente el code del link dentro del payload)
-        tx.setPayloadJson(result.rawJson());
+            // Guardar respuesta PF como auditoría
+            tx.setPayloadJson(appendPayload(tx.getPayloadJson(), result.rawJson()));
 
-        // OJO: NO uses providerRef para el "code" si luego lo pisas con Oper.
-        // Si quieres guardarlo, mételo en payload o crea columna linkCode.
-        txRepo.save(tx);
+            // Si algún día guardas "code", NO lo metas en providerRef (providerRef se usa para "Oper" del webhook)
+            // tx.setPayloadJson(appendPayload(tx.getPayloadJson(), "{\"pfLinkCode\":\"" + safe(result.code()) + "\"}"));
 
-        return new CheckoutResponse(tx.getId(), result.checkoutUrl(), "PENDING");
+            txRepo.save(tx);
+
+            return new CheckoutResponse(tx.getId(), result.checkoutUrl(), tx.getStatus());
+        } catch (Exception ex) {
+            tx.setStatus("ERROR");
+            tx.setPayloadJson(appendPayload(tx.getPayloadJson(),
+                    "{\"time\":\"" + Instant.now() + "\",\"error\":\"PF_LINK_CREATE_FAILED\",\"message\":\"" + safe(ex.getMessage()) + "\"}"
+            ));
+            txRepo.save(tx);
+            throw ex;
+        }
     }
 
-    
+    /**
+     * Webhook PF: transacción aprobada.
+     * - Idempotente (si ya está PAID no repite)
+     * - Guarda providerRef (Oper) y append de payload
+     * - Activa suscripción desde tx pagada
+     */
     @Transactional
-    public void markAsPaid(UUID transactionId, String providerRef, String rawPayload) {
-        PaymentTransactionEntity tx = txRepo.findById(transactionId)
-                .orElseThrow(() -> new IllegalStateException("Transaccion no encontrada"));
+    public void markAsPaid(UUID txId, String providerRef, String rawBody) {
 
-        // Idempotencia fuerte
-        if ("PAID".equals(tx.getStatus())) {
-            return;
-        }
+        PaymentTransactionEntity tx = txRepo.findById(txId)
+                .orElseThrow(() -> new IllegalStateException("Transaccion no encontrada: " + txId));
 
-        // Solo permitimos transición desde PENDING
-        if (!"PENDING".equals(tx.getStatus())) {
+        if ("PAID".equalsIgnoreCase(tx.getStatus())) {
+            // Igual guardamos payload si viene nuevo? (opcional)
+            if (rawBody != null && !rawBody.isBlank()) {
+                tx.setPayloadJson(appendPayload(tx.getPayloadJson(), rawBody));
+                if (providerRef != null && !providerRef.isBlank()) tx.setProviderRef(providerRef);
+                txRepo.save(tx);
+            }
             return;
         }
 
         tx.setStatus("PAID");
-        tx.setProviderRef(providerRef);
-        tx.setPayloadJson(rawPayload);
+        if (providerRef != null && !providerRef.isBlank()) tx.setProviderRef(providerRef);
+        tx.setPayloadJson(appendPayload(tx.getPayloadJson(), rawBody));
 
         txRepo.save(tx);
 
-        // ACTIVAR SUSCRIPCIÓN
-        subscriptionService.activateFromPaidTransaction(
-                tx.getTenantId(),
-                tx.getId()
-        );
+        // Cierre real de Billing: activa o extiende suscripción
+        subscriptionService.activateFromPaidTransaction(tx.getTenantId(), tx.getId());
     }
 
+    /**
+     * Webhook PF: transacción declinada.
+     * - Idempotente: si ya está PAID no se toca; si ya está DECLINED tampoco.
+     * - Guarda providerRef y append payload
+     */
     @Transactional
-    public void markAsDeclined(UUID transactionId, String providerRef, String rawPayload) {
-        PaymentTransactionEntity tx = txRepo.findById(transactionId)
-                .orElseThrow(() -> new IllegalStateException("Transaccion no encontrada"));
+    public void markAsDeclined(UUID txId, String providerRef, String rawBody) {
 
-        if (!"PENDING".equals(tx.getStatus())) {
+        PaymentTransactionEntity tx = txRepo.findById(txId)
+                .orElseThrow(() -> new IllegalStateException("Transaccion no encontrada: " + txId));
+
+        if ("PAID".equalsIgnoreCase(tx.getStatus())) {
+            // no degradamos a DECLINED
+            tx.setPayloadJson(appendPayload(tx.getPayloadJson(), rawBody));
+            txRepo.save(tx);
+            return;
+        }
+
+        if ("DECLINED".equalsIgnoreCase(tx.getStatus())) {
+            tx.setPayloadJson(appendPayload(tx.getPayloadJson(), rawBody));
+            if (providerRef != null && !providerRef.isBlank()) tx.setProviderRef(providerRef);
+            txRepo.save(tx);
             return;
         }
 
         tx.setStatus("DECLINED");
-        tx.setProviderRef(providerRef);
-        tx.setPayloadJson(rawPayload);
+        if (providerRef != null && !providerRef.isBlank()) tx.setProviderRef(providerRef);
+        tx.setPayloadJson(appendPayload(tx.getPayloadJson(), rawBody));
 
         txRepo.save(tx);
     }
+
     public record CheckoutResponse(UUID transactionId, String redirectUrl, String status) {}
+
+    // ---------------- helpers ----------------
+
+    private String appendPayload(String existing, String next) {
+        if (next == null || next.isBlank()) return existing;
+        if (existing == null || existing.isBlank()) return next;
+        return existing + "\n---\n" + next;
+    }
+
+    private String safe(String s) {
+        if (s == null) return "";
+        return s.replace("\"", "'").replace("\n", " ").replace("\r", " ");
+    }
 }

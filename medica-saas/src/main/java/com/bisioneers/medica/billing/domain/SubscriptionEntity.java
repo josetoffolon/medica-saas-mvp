@@ -40,24 +40,13 @@ public class SubscriptionEntity extends AuditedEntity {
     @Column(name = "last_transaction_id", columnDefinition = "BINARY(16)")
     private UUID lastTransactionId;
 
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private Instant createdAt;
-
-    @Column(name = "updated_at", nullable = false)
-    private Instant updatedAt;
 
     @PrePersist
     void prePersist() {
         Instant now = Instant.now();
-        if (createdAt == null) createdAt = now;
-        if (updatedAt == null) updatedAt = now;
         if (status == null) status = "INACTIVE";
     }
 
-    @PreUpdate
-    void preUpdate() {
-        updatedAt = Instant.now();
-    }
 
 	/**
 	 * @return the tenantId
@@ -127,34 +116,6 @@ public class SubscriptionEntity extends AuditedEntity {
 	 */
 	public void setLastTransactionId(UUID lastTransactionId) {
 		this.lastTransactionId = lastTransactionId;
-	}
-
-	/**
-	 * @return the createdAt
-	 */
-	public Instant getCreatedAt() {
-		return createdAt;
-	}
-
-	/**
-	 * @param createdAt the createdAt to set
-	 */
-	public void setCreatedAt(Instant createdAt) {
-		this.createdAt = createdAt;
-	}
-
-	/**
-	 * @return the updatedAt
-	 */
-	public Instant getUpdatedAt() {
-		return updatedAt;
-	}
-
-	/**
-	 * @param updatedAt the updatedAt to set
-	 */
-	public void setUpdatedAt(Instant updatedAt) {
-		this.updatedAt = updatedAt;
 	}
 
 }

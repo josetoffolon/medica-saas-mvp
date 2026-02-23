@@ -43,11 +43,6 @@ public class PaymentTransactionEntity extends TenantScopedEntity {
   @Column(name="payload_json", columnDefinition="LONGTEXT")
   private String payloadJson;
 
-  @Column(name="created_at", nullable = false, updatable = false)
-  private Instant createdAt;
-
-  @Column(name="updated_at", nullable = false)
-  private Instant updatedAt;
   
   @PrePersist
   void prePersistI(){
@@ -150,34 +145,6 @@ public class PaymentTransactionEntity extends TenantScopedEntity {
    */
   public void setPayloadJson(String payloadJson) {
 	this.payloadJson = payloadJson;
-  }
-
-  /**
-   * @return the createdAt
-   */
-  public Instant getCreatedAt() {
-	return createdAt;
-  }
-
-  /**
-   * @param createdAt the createdAt to set
-   */
-  public void setCreatedAt(Instant createdAt) {
-	this.createdAt = createdAt;
-  }
-
-  /**
-   * @return the updatedAt
-   */
-  public Instant getUpdatedAt() {
-	return updatedAt;
-  }
-
-  /**
-   * @param updatedAt the updatedAt to set
-   */
-  public void setUpdatedAt(Instant updatedAt) {
-	this.updatedAt = updatedAt;
   }
   
 }
