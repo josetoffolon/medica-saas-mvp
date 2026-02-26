@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.UUID;
 
 public interface AppointmentRepository extends JpaRepository<AppointmentEntity, UUID> {
-    
+
     /**
      * Obtener citas de un tenant en un rango de fechas
      */
@@ -24,26 +24,78 @@ public interface AppointmentRepository extends JpaRepository<AppointmentEntity, 
         @Param("start") LocalDateTime start,
         @Param("end") LocalDateTime end
     );
-    
+
     /**
-     * Verificar si hay conflicto de horario (para evitar choques)
+     * Verificar si hay conflicto de horario (para evitar choques).
+     * 
+     * PROBLEMA CORREGIDO:
+     * La query anterior usaba FUNCTION('DATE_ADD', a.scheduledAt, a.durationMinutes, 'MINUTE')
+     * que NO es JPQL válido y falla en MySQL. La función DATE_ADD en JPQL requiere sintaxis
+     * específica del dialecto que Hibernate no resuelve correctamente.
+     * 
+     * SOLUCIÓN: Native query con MySQL DATE_ADD nativo + parámetro excludeId
+     * para poder excluir la cita actual durante updates.
+     * 
+     * Lógica de overlap: dos rangos [A_start, A_end) y [B_start, B_end) se solapan
+     * si A_start < B_end AND B_start < A_end.
+     * 
+     * - Cita nueva:     [:startTime, :endTime)
+     * - Cita existente: [a.scheduled_at, a.scheduled_at + a.duration_minutes)
      */
-    @Query("SELECT COUNT(a) > 0 FROM AppointmentEntity a WHERE a.tenantId = :tenantId " +
-           "AND a.status NOT IN ('CANCELLED', 'NO_SHOW') " +
-           "AND ((a.scheduledAt < :endTime AND " +
-           "FUNCTION('DATE_ADD', a.scheduledAt, a.durationMinutes, 'MINUTE') > :startTime))")
+    @Query(value =
+        "SELECT COUNT(*) > 0 FROM appointment a " +
+        "WHERE a.tenant_id = :tenantId " +
+        "AND a.status NOT IN ('CANCELLED', 'NO_SHOW') " +
+        "AND a.scheduled_at < :endTime " +
+        "AND DATE_ADD(a.scheduled_at, INTERVAL a.duration_minutes MINUTE) > :startTime " +
+        "AND (:excludeId IS NULL OR a.id != :excludeId)",
+        nativeQuery = true
+    )
     boolean hasConflict(
-        @Param("tenantId") UUID tenantId,
+        @Param("tenantId") byte[] tenantId,
         @Param("startTime") LocalDateTime startTime,
-        @Param("endTime") LocalDateTime endTime
+        @Param("endTime") LocalDateTime endTime,
+        @Param("excludeId") byte[] excludeId
     );
-    
+
+    /**
+     * Sobrecarga sin excludeId (para crear citas nuevas).
+     * Usa default method para no duplicar la query.
+     */
+    default boolean hasConflict(UUID tenantId, LocalDateTime startTime, LocalDateTime endTime) {
+        return hasConflict(uuidToBytes(tenantId), startTime, endTime, null);
+    }
+
+    /**
+     * Con excludeId (para actualizar citas existentes sin conflicto consigo misma).
+     */
+    default boolean hasConflictExcluding(UUID tenantId, LocalDateTime startTime, 
+                                          LocalDateTime endTime, UUID excludeId) {
+        return hasConflict(uuidToBytes(tenantId), startTime, endTime, uuidToBytes(excludeId));
+    }
+
+    /**
+     * Convierte UUID a byte[] BINARY(16) para native queries.
+     * Necesario porque las native queries no usan el JdbcTypeCode mapping de JPA.
+     */
+    private static byte[] uuidToBytes(UUID uuid) {
+        if (uuid == null) return null;
+        byte[] bytes = new byte[16];
+        long msb = uuid.getMostSignificantBits();
+        long lsb = uuid.getLeastSignificantBits();
+        for (int i = 0; i < 8; i++) {
+            bytes[i]     = (byte) (msb >>> (56 - i * 8));
+            bytes[i + 8] = (byte) (lsb >>> (56 - i * 8));
+        }
+        return bytes;
+    }
+
     /**
      * Obtener citas de un paciente específico
      */
     Page<AppointmentEntity> findByTenantIdAndPatientIdOrderByScheduledAtDesc(
         UUID tenantId, UUID patientId, Pageable pageable);
-    
+
     /**
      * Obtener próximas citas (para recordatorios)
      */
@@ -56,7 +108,7 @@ public interface AppointmentRepository extends JpaRepository<AppointmentEntity, 
         @Param("now") LocalDateTime now,
         @Param("until") LocalDateTime until
     );
-    
+
     /**
      * Obtener citas que necesitan recordatorio de 24h
      */
@@ -67,7 +119,7 @@ public interface AppointmentRepository extends JpaRepository<AppointmentEntity, 
         @Param("now") LocalDateTime now,
         @Param("windowEnd") LocalDateTime windowEnd
     );
-    
+
     /**
      * Obtener citas que necesitan recordatorio de 2h
      */

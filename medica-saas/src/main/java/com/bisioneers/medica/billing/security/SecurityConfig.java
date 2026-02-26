@@ -1,6 +1,5 @@
 package com.bisioneers.medica.billing.security;
 
-
 import com.bisioneers.medica.billing.SubscriptionEnforcementFilter;
 import com.bisioneers.medica.billing.tenant.TenantContextFilter;
 
@@ -13,72 +12,71 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
-import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 
+/**
+ * Configuración de seguridad unificada.
+ * 
+ * CAMBIOS:
+ * - Se eliminó el JwtAuthenticationConverter genérico (que producía un Jwt como principal)
+ * - Se usa StaffJwtAuthenticationConverter que produce StaffUserPrincipal como principal
+ * - Se eliminó la necesidad de JwtAuthenticationFilter custom (BORRAR ese archivo)
+ * - La cadena de filtros queda: BearerTokenAuth → TenantContext → SubscriptionEnforcement
+ */
 @Configuration
 public class SecurityConfig {
 
-  @Bean
-  SecurityFilterChain filterChain(
-      HttpSecurity http,
-      TenantContextFilter tenantContextFilter,
-      SubscriptionEnforcementFilter subFilter
-  ) throws Exception {
+    private final StaffJwtAuthenticationConverter staffJwtConverter;
 
-    http
-      .csrf(csrf -> csrf.disable())
-      .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-      .authorizeHttpRequests(auth -> auth
-        .requestMatchers(
-          "/api/public/**",
-          "/api/auth/**",
-          "/billing/return",
-          "/api/billing/webhook/**",
-          "/swagger-ui/**",
-          "/v3/api-docs/**",
-          "/actuator/**"
-        ).permitAll()
-        .anyRequest().authenticated()
-      )
-      // JWT 100% Spring Security
-      .oauth2ResourceServer(oauth -> oauth
-    		    .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
-    		);
-
-    // 1) Primero: BearerTokenAuthenticationFilter (lo agrega Spring)
-    // 2) Luego: ponemos tenantContextFilter
-    http.addFilterAfter(tenantContextFilter, BearerTokenAuthenticationFilter.class);
-
-    // 3) Y después el enforcement de suscripción (ya con tenantId disponible)
-    http.addFilterAfter(subFilter, TenantContextFilter.class);
-
-    return http.build();
-  }
+    public SecurityConfig(StaffJwtAuthenticationConverter staffJwtConverter) {
+        this.staffJwtConverter = staffJwtConverter;
+    }
 
     @Bean
-    public JwtAuthenticationConverter jwtAuthenticationConverter() {
+    SecurityFilterChain filterChain(
+            HttpSecurity http,
+            TenantContextFilter tenantContextFilter,
+            SubscriptionEnforcementFilter subFilter
+    ) throws Exception {
 
-        JwtGrantedAuthoritiesConverter rolesConverter = new JwtGrantedAuthoritiesConverter();
-        rolesConverter.setAuthoritiesClaimName("roles");
-        rolesConverter.setAuthorityPrefix("");
+        http
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers(
+                    "/api/public/**",
+                    "/api/auth/**",
+                    "/billing/return",
+                    "/api/billing/webhook/**",
+                    "/swagger-ui/**",
+                    "/v3/api-docs/**",
+                    "/actuator/**"
+                ).permitAll()
+                .anyRequest().authenticated()
+            )
+            // JWT: Spring Security maneja el Bearer token y usa nuestro converter
+            // para producir StaffUserPrincipal (TenantAware) como principal
+            .oauth2ResourceServer(oauth -> oauth
+                .jwt(jwt -> jwt.jwtAuthenticationConverter(staffJwtConverter))
+            );
 
-        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
-        converter.setJwtGrantedAuthoritiesConverter(rolesConverter);
+        // Filtros adicionales DESPUÉS del BearerTokenAuthenticationFilter de Spring:
+        // 1) TenantContextFilter: extrae tenantId del principal y lo pone en ThreadLocal
+        http.addFilterAfter(tenantContextFilter, BearerTokenAuthenticationFilter.class);
 
-        return converter;
+        // 2) SubscriptionEnforcementFilter: verifica suscripción activa
+        http.addFilterAfter(subFilter, TenantContextFilter.class);
+
+        return http.build();
     }
 
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
         return config.getAuthenticationManager();
     }
-    
+
     @Bean
     public PasswordEncoder passwordEncoder() {
-      return new BCryptPasswordEncoder();
-      
+        return new BCryptPasswordEncoder();
     }
-    
 }
