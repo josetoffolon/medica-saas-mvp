@@ -14,57 +14,65 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Servicio de citas.
+ * 
+ * CAMBIOS:
+ * - create(): usa hasConflict(tenantId, start, end) sin excludeId
+ * - update(): usa hasConflictExcluding(tenantId, start, end, appointmentId)
+ *   para NO detectar la propia cita como conflicto durante edición
+ */
 @Service
 public class AppointmentService {
 
     private final AppointmentRepository appointmentRepository;
     private final ServiceRepository serviceRepository;
 
-    public AppointmentService(AppointmentRepository appointmentRepository, 
-                             ServiceRepository serviceRepository) {
+    public AppointmentService(AppointmentRepository appointmentRepository,
+                              ServiceRepository serviceRepository) {
         this.appointmentRepository = appointmentRepository;
         this.serviceRepository = serviceRepository;
     }
 
     @Transactional
     public AppointmentEntity create(AppointmentEntity appointment) {
-        
+
         // Si hay serviceId, cargar duración del servicio
         if (appointment.getServiceId() != null) {
             ServiceEntity service = serviceRepository.findById(appointment.getServiceId())
                 .orElseThrow(() -> new IllegalArgumentException("Servicio no encontrado"));
-            
+
             // Validar que el servicio pertenece al mismo tenant
             if (!service.getTenantId().equals(appointment.getTenantId())) {
                 throw new IllegalArgumentException("Servicio no pertenece al tenant");
             }
-            
+
             // Usar duración del servicio si no se especificó
             if (appointment.getDurationMinutes() == 0) {
                 appointment.setDurationMinutes(service.getDurationMinutes());
             }
         }
-        
-        // Validar que no haya choque de horario
+
+        // Validar que no haya choque de horario (sin excludeId → cita nueva)
         LocalDateTime endTime = appointment.getScheduledAt()
             .plusMinutes(appointment.getDurationMinutes());
-        
+
         boolean hasConflict = appointmentRepository.hasConflict(
             appointment.getTenantId(),
             appointment.getScheduledAt(),
             endTime
         );
-        
+
         if (hasConflict) {
             throw new IllegalArgumentException(
                 "Ya existe una cita en ese horario. Por favor seleccione otro horario.");
         }
-        
+
         // Estado inicial
         if (appointment.getStatus() == null || appointment.getStatus().isBlank()) {
             appointment.setStatus("SCHEDULED");
         }
-        
+
         return appointmentRepository.save(appointment);
     }
 
@@ -72,32 +80,33 @@ public class AppointmentService {
     public AppointmentEntity update(UUID id, AppointmentEntity updates) {
         AppointmentEntity existing = appointmentRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Cita no encontrada"));
-        
+
         // Validar tenant
         if (!existing.getTenantId().equals(updates.getTenantId())) {
             throw new IllegalArgumentException("No se puede cambiar el tenant de la cita");
         }
-        
-        // Si se cambia la fecha/hora, validar choques
+
+        // Si se cambia la fecha/hora o duración, validar choques
+        // CORRECCIÓN: usa hasConflictExcluding para excluir esta misma cita
         if (!existing.getScheduledAt().equals(updates.getScheduledAt()) ||
             existing.getDurationMinutes() != updates.getDurationMinutes()) {
-            
+
             LocalDateTime endTime = updates.getScheduledAt()
                 .plusMinutes(updates.getDurationMinutes());
-            
-            // Excluir esta misma cita de la validación
-            boolean hasConflict = appointmentRepository.hasConflict(
+
+            boolean hasConflict = appointmentRepository.hasConflictExcluding(
                 updates.getTenantId(),
                 updates.getScheduledAt(),
-                endTime
+                endTime,
+                id  // ← excluir esta cita de la detección
             );
-            
+
             if (hasConflict) {
                 throw new IllegalArgumentException(
                     "Ya existe una cita en ese horario. Por favor seleccione otro horario.");
             }
         }
-        
+
         // Actualizar campos
         existing.setPatientId(updates.getPatientId());
         existing.setServiceId(updates.getServiceId());
@@ -107,7 +116,7 @@ public class AppointmentService {
         existing.setReason(updates.getReason());
         existing.setStaffNotes(updates.getStaffNotes());
         existing.setPatientNotes(updates.getPatientNotes());
-        
+
         return appointmentRepository.save(existing);
     }
 
@@ -115,17 +124,17 @@ public class AppointmentService {
     public AppointmentEntity getById(UUID tenantId, UUID appointmentId) {
         AppointmentEntity appointment = appointmentRepository.findById(appointmentId)
             .orElseThrow(() -> new IllegalArgumentException("Cita no encontrada"));
-        
+
         if (!appointment.getTenantId().equals(tenantId)) {
             throw new IllegalArgumentException("Acceso denegado");
         }
-        
+
         return appointment;
     }
 
     @Transactional(readOnly = true)
-    public List<AppointmentEntity> getByDateRange(UUID tenantId, 
-                                                   LocalDateTime start, 
+    public List<AppointmentEntity> getByDateRange(UUID tenantId,
+                                                   LocalDateTime start,
                                                    LocalDateTime end) {
         return appointmentRepository.findByTenantAndDateRange(tenantId, start, end);
     }
@@ -147,11 +156,11 @@ public class AppointmentService {
     @Transactional
     public void cancel(UUID tenantId, UUID appointmentId, String reason) {
         AppointmentEntity appointment = getById(tenantId, appointmentId);
-        
+
         if ("CANCELLED".equals(appointment.getStatus())) {
             throw new IllegalArgumentException("La cita ya está cancelada");
         }
-        
+
         appointment.setStatus("CANCELLED");
         appointment.setCancelledAt(Instant.now());
         appointment.setCancellationReason(reason);
@@ -176,13 +185,13 @@ public class AppointmentService {
     public void markReminderSent(UUID appointmentId, String reminderType) {
         AppointmentEntity appointment = appointmentRepository.findById(appointmentId)
             .orElseThrow(() -> new IllegalArgumentException("Cita no encontrada"));
-        
+
         if ("24h".equals(reminderType)) {
             appointment.setReminder24hSent(true);
         } else if ("2h".equals(reminderType)) {
             appointment.setReminder2hSent(true);
         }
-        
+
         appointmentRepository.save(appointment);
     }
 
