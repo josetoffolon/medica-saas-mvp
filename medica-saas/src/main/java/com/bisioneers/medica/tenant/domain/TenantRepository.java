@@ -7,4 +7,5 @@ import java.util.UUID;
 public interface TenantRepository extends JpaRepository<TenantEntity, UUID> {
     Optional<TenantEntity> findByAlias(String alias);
     Optional<TenantEntity> findByContactEmail(String email);
+    boolean existsByAlias(String alias);
 }
