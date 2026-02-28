@@ -2,77 +2,97 @@ package com.bisioneers.medica.billing.security;
 
 import com.bisioneers.medica.billing.SubscriptionEnforcementFilter;
 import com.bisioneers.medica.billing.tenant.TenantContextFilter;
-
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 
 /**
  * Configuración de seguridad unificada.
- * 
- * CAMBIOS:
- * - Se eliminó el JwtAuthenticationConverter genérico (que producía un Jwt como principal)
- * - Se usa StaffJwtAuthenticationConverter que produce StaffUserPrincipal como principal
- * - Se eliminó la necesidad de JwtAuthenticationFilter custom (BORRAR ese archivo)
- * - La cadena de filtros queda: BearerTokenAuth → TenantContext → SubscriptionEnforcement
+ *
+ * CAMBIOS vs versión anterior:
+ * - /api/auth/register y /api/auth/refresh ahora son públicos
+ * - @EnableScheduling para limpieza automática del blocklist
+ * - @EnableMethodSecurity para @PreAuthorize en controllers
+ * - Imports corregidos: SubscriptionEnforcementFilter y TenantContextFilter
+ *   están en paquetes diferentes (billing y billing.tenant respectivamente)
+ *
+ * Flujo de autenticación:
+ *   Request → BearerTokenAuthFilter (Spring) →
+ *   StaffJwtAuthenticationConverter → TenantContextFilter →
+ *   SubscriptionEnforcementFilter → Controller
  */
 @Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+@EnableScheduling
 public class SecurityConfig {
 
     private final StaffJwtAuthenticationConverter staffJwtConverter;
+    private final TenantContextFilter tenantContextFilter;
+    private final SubscriptionEnforcementFilter subscriptionEnforcementFilter;
 
-    public SecurityConfig(StaffJwtAuthenticationConverter staffJwtConverter) {
+    public SecurityConfig(
+            StaffJwtAuthenticationConverter staffJwtConverter,
+            TenantContextFilter tenantContextFilter,
+            SubscriptionEnforcementFilter subscriptionEnforcementFilter
+    ) {
         this.staffJwtConverter = staffJwtConverter;
+        this.tenantContextFilter = tenantContextFilter;
+        this.subscriptionEnforcementFilter = subscriptionEnforcementFilter;
     }
 
     @Bean
-    SecurityFilterChain filterChain(
-            HttpSecurity http,
-            TenantContextFilter tenantContextFilter,
-            SubscriptionEnforcementFilter subFilter
-    ) throws Exception {
-
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
-            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
+                // ── Endpoints públicos (no requieren JWT) ──
                 .requestMatchers(
-                    "/api/public/**",
-                    "/api/auth/**",
-                    "/billing/return",
-                    "/api/billing/webhook/**",
-                    "/swagger-ui/**",
-                    "/v3/api-docs/**",
-                    "/actuator/**"
+                    "/api/auth/login",
+                    "/api/auth/register",
+                    "/api/auth/refresh"
                 ).permitAll()
+                // Billing webhook + return (Paguelo Fácil)
+                .requestMatchers(
+                    "/billing/return",
+                    "/api/billing/webhook/**"
+                ).permitAll()
+                // Swagger / OpenAPI (desarrollo)
+                .requestMatchers(
+                    "/swagger-ui/**",
+                    "/v3/api-docs/**"
+                ).permitAll()
+                // Actuator health (para load balancer / probes)
+                .requestMatchers("/actuator/health").permitAll()
+                // ── Todo lo demás requiere autenticación ──
                 .anyRequest().authenticated()
             )
-            // JWT: Spring Security maneja el Bearer token y usa nuestro converter
-            // para producir StaffUserPrincipal (TenantAware) como principal
             .oauth2ResourceServer(oauth -> oauth
                 .jwt(jwt -> jwt.jwtAuthenticationConverter(staffJwtConverter))
             );
 
-        // Filtros adicionales DESPUÉS del BearerTokenAuthenticationFilter de Spring:
-        // 1) TenantContextFilter: extrae tenantId del principal y lo pone en ThreadLocal
+        // Filtros custom DESPUÉS del BearerTokenAuthenticationFilter de Spring
         http.addFilterAfter(tenantContextFilter, BearerTokenAuthenticationFilter.class);
-
-        // 2) SubscriptionEnforcementFilter: verifica suscripción activa
-        http.addFilterAfter(subFilter, TenantContextFilter.class);
+        http.addFilterAfter(subscriptionEnforcementFilter, TenantContextFilter.class);
 
         return http.build();
     }
 
     @Bean
-    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
-        return config.getAuthenticationManager();
+    public AuthenticationManager authenticationManager(
+            AuthenticationConfiguration authConfig) throws Exception {
+        return authConfig.getAuthenticationManager();
     }
 
     @Bean

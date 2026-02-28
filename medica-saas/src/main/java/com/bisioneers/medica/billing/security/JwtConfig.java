@@ -1,47 +1,67 @@
 package com.bisioneers.medica.billing.security;
 
+import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.jwt.*;
-
-import com.nimbusds.jose.jwk.source.ImmutableSecret;
-
-import jakarta.annotation.PostConstruct;
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 
+/**
+ * Configuración del encoder/decoder JWT.
+ *
+ * CAMBIOS vs versión anterior:
+ * - JwtDecoder ahora incluye TokenBlocklistValidator
+ *   (rechaza tokens revocados por logout)
+ * - Issuer validation habilitada
+ */
 @Configuration
 public class JwtConfig {
 
-    @Bean
-    public SecretKey jwtSecretKey(@Value("${security.jwt.secret}") String secret) {
+    @Value("${security.jwt.secret}")
+    private String jwtSecret;
 
-        if (secret == null || secret.length() < 32) {
-            throw new IllegalArgumentException("JWT secret must be at least 32 characters long");
-        }
+    @Value("${app.jwt.issuer:medica-saas}")
+    private String issuer;
 
-        return new SecretKeySpec(
-                secret.getBytes(StandardCharsets.UTF_8),
-                "HmacSHA256"
-        );
+    private final TokenBlocklistValidator tokenBlocklistValidator;
+
+    public JwtConfig(TokenBlocklistValidator tokenBlocklistValidator) {
+        this.tokenBlocklistValidator = tokenBlocklistValidator;
     }
 
     @Bean
-    public JwtEncoder jwtEncoder(@Value("${security.jwt.secret}") String secret) {
-        return new NimbusJwtEncoder(
-                new ImmutableSecret<>(secret.getBytes(StandardCharsets.UTF_8))
-        );
-    }
+    public JwtDecoder jwtDecoder() {
+        byte[] keyBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
+        SecretKey key = new SecretKeySpec(keyBytes, "HmacSHA256");
 
-    @Bean
-    public JwtDecoder jwtDecoder(SecretKey secretKey) {
-        return NimbusJwtDecoder
-                .withSecretKey(secretKey)
+        NimbusJwtDecoder decoder = NimbusJwtDecoder
+                .withSecretKey(key)
                 .macAlgorithm(MacAlgorithm.HS256)
                 .build();
+
+        // Cadena de validación: timestamps + issuer + blocklist
+        OAuth2TokenValidator<Jwt> defaultValidators =
+                JwtValidators.createDefaultWithIssuer(issuer);
+
+        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                defaultValidators,
+                tokenBlocklistValidator
+        ));
+
+        return decoder;
+    }
+
+    @Bean
+    public JwtEncoder jwtEncoder() {
+        byte[] keyBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
+        SecretKey key = new SecretKeySpec(keyBytes, "HmacSHA256");
+        return new NimbusJwtEncoder(new ImmutableSecret<>(key));
     }
 }
