@@ -15,193 +15,205 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Servicio de citas.
- * 
- * CAMBIOS:
- * - create(): usa hasConflict(tenantId, start, end) sin excludeId
- * - update(): usa hasConflictExcluding(tenantId, start, end, appointmentId)
- *   para NO detectar la propia cita como conflicto durante edición
+
+- Servicio de citas.
+- 
+- CAMBIOS vs versión anterior:
+- - create() y update() ahora validan horarios laborales del tenant
+- via BusinessHoursService (lee de TenantEntity.settings)
  */
 @Service
 public class AppointmentService {
 
-    private final AppointmentRepository appointmentRepository;
-    private final ServiceRepository serviceRepository;
+	private final AppointmentRepository appointmentRepository;
+	private final ServiceRepository serviceRepository;
+	private final BusinessHoursService businessHoursService;
 
-    public AppointmentService(AppointmentRepository appointmentRepository,
-                              ServiceRepository serviceRepository) {
-        this.appointmentRepository = appointmentRepository;
-        this.serviceRepository = serviceRepository;
-    }
+	public AppointmentService(AppointmentRepository appointmentRepository,
+			ServiceRepository serviceRepository,
+			BusinessHoursService businessHoursService) {
+		this.appointmentRepository = appointmentRepository;
+		this.serviceRepository = serviceRepository;
+		this.businessHoursService = businessHoursService;
+	}
 
-    @Transactional
-    public AppointmentEntity create(AppointmentEntity appointment) {
+	@Transactional
+	public AppointmentEntity create(AppointmentEntity appointment) {
 
-        // Si hay serviceId, cargar duración del servicio
-        if (appointment.getServiceId() != null) {
-            ServiceEntity service = serviceRepository.findById(appointment.getServiceId())
-                .orElseThrow(() -> new IllegalArgumentException("Servicio no encontrado"));
+		// Si hay serviceId, cargar duración del servicio
+		if (appointment.getServiceId() != null) {
+			ServiceEntity service = serviceRepository.findById(appointment.getServiceId())
+					.orElseThrow(() -> new IllegalArgumentException("Servicio no encontrado"));
 
-            // Validar que el servicio pertenece al mismo tenant
-            if (!service.getTenantId().equals(appointment.getTenantId())) {
-                throw new IllegalArgumentException("Servicio no pertenece al tenant");
-            }
+			if (!service.getTenantId().equals(appointment.getTenantId())) {
+				throw new IllegalArgumentException("Servicio no pertenece al tenant");
+			}
 
-            // Usar duración del servicio si no se especificó
-            if (appointment.getDurationMinutes() == 0) {
-                appointment.setDurationMinutes(service.getDurationMinutes());
-            }
-        }
+			if (appointment.getDurationMinutes() == 0) {
+				appointment.setDurationMinutes(service.getDurationMinutes());
+			}
+		}
 
-        // Validar que no haya choque de horario (sin excludeId → cita nueva)
-        LocalDateTime endTime = appointment.getScheduledAt()
-            .plusMinutes(appointment.getDurationMinutes());
+		// Validar horario laboral del tenant
+		businessHoursService.validate(
+				appointment.getTenantId(),
+				appointment.getScheduledAt(),
+				appointment.getDurationMinutes()
+				);
 
-        boolean hasConflict = appointmentRepository.hasConflict(
-            appointment.getTenantId(),
-            appointment.getScheduledAt(),
-            endTime
-        );
+		// Validar que no haya choque de horario
+		LocalDateTime endTime = appointment.getScheduledAt()
+				.plusMinutes(appointment.getDurationMinutes());
 
-        if (hasConflict) {
-            throw new IllegalArgumentException(
-                "Ya existe una cita en ese horario. Por favor seleccione otro horario.");
-        }
+		boolean hasConflict = appointmentRepository.hasConflict(
+				appointment.getTenantId(),
+				appointment.getScheduledAt(),
+				endTime
+				);
 
-        // Estado inicial
-        if (appointment.getStatus() == null || appointment.getStatus().isBlank()) {
-            appointment.setStatus("SCHEDULED");
-        }
+		if (hasConflict) {
+			throw new IllegalArgumentException(
+					"Ya existe una cita en ese horario. Por favor seleccione otro horario.");
+		}
 
-        return appointmentRepository.save(appointment);
-    }
+		if (appointment.getStatus() == null || appointment.getStatus().isBlank()) {
+			appointment.setStatus("SCHEDULED");
+		}
 
-    @Transactional
-    public AppointmentEntity update(UUID id, AppointmentEntity updates) {
-        AppointmentEntity existing = appointmentRepository.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Cita no encontrada"));
+		return appointmentRepository.save(appointment);
+	}
 
-        // Validar tenant
-        if (!existing.getTenantId().equals(updates.getTenantId())) {
-            throw new IllegalArgumentException("No se puede cambiar el tenant de la cita");
-        }
+	@Transactional
+	public AppointmentEntity update(UUID id, AppointmentEntity updates) {
+		AppointmentEntity existing = appointmentRepository.findById(id)
+				.orElseThrow(() -> new IllegalArgumentException("Cita no encontrada"));
 
-        // Si se cambia la fecha/hora o duración, validar choques
-        // CORRECCIÓN: usa hasConflictExcluding para excluir esta misma cita
-        if (!existing.getScheduledAt().equals(updates.getScheduledAt()) ||
-            existing.getDurationMinutes() != updates.getDurationMinutes()) {
+		if (!existing.getTenantId().equals(updates.getTenantId())) {
+			throw new IllegalArgumentException("No se puede cambiar el tenant de la cita");
+		}
 
-            LocalDateTime endTime = updates.getScheduledAt()
-                .plusMinutes(updates.getDurationMinutes());
+		// Si se cambia la fecha/hora o duración, re-validar
+		if (!existing.getScheduledAt().equals(updates.getScheduledAt()) ||
+				existing.getDurationMinutes() != updates.getDurationMinutes()) {
 
-            boolean hasConflict = appointmentRepository.hasConflictExcluding(
-                updates.getTenantId(),
-                updates.getScheduledAt(),
-                endTime,
-                id  // ← excluir esta cita de la detección
-            );
+			// Validar horario laboral
+			businessHoursService.validate(
+					updates.getTenantId(),
+					updates.getScheduledAt(),
+					updates.getDurationMinutes()
+					);
 
-            if (hasConflict) {
-                throw new IllegalArgumentException(
-                    "Ya existe una cita en ese horario. Por favor seleccione otro horario.");
-            }
-        }
+			// Validar conflictos (excluyendo esta cita)
+			LocalDateTime endTime = updates.getScheduledAt()
+					.plusMinutes(updates.getDurationMinutes());
 
-        // Actualizar campos
-        existing.setPatientId(updates.getPatientId());
-        existing.setServiceId(updates.getServiceId());
-        existing.setScheduledAt(updates.getScheduledAt());
-        existing.setDurationMinutes(updates.getDurationMinutes());
-        existing.setStatus(updates.getStatus());
-        existing.setReason(updates.getReason());
-        existing.setStaffNotes(updates.getStaffNotes());
-        existing.setPatientNotes(updates.getPatientNotes());
+			boolean hasConflict = appointmentRepository.hasConflictExcluding(
+					updates.getTenantId(),
+					updates.getScheduledAt(),
+					endTime,
+					id
+					);
 
-        return appointmentRepository.save(existing);
-    }
+			if (hasConflict) {
+				throw new IllegalArgumentException(
+						"Ya existe una cita en ese horario. Por favor seleccione otro horario.");
+			}
+		}
 
-    @Transactional(readOnly = true)
-    public AppointmentEntity getById(UUID tenantId, UUID appointmentId) {
-        AppointmentEntity appointment = appointmentRepository.findById(appointmentId)
-            .orElseThrow(() -> new IllegalArgumentException("Cita no encontrada"));
+		existing.setPatientId(updates.getPatientId());
+		existing.setServiceId(updates.getServiceId());
+		existing.setScheduledAt(updates.getScheduledAt());
+		existing.setDurationMinutes(updates.getDurationMinutes());
+		existing.setStatus(updates.getStatus());
+		existing.setReason(updates.getReason());
+		existing.setStaffNotes(updates.getStaffNotes());
+		existing.setPatientNotes(updates.getPatientNotes());
 
-        if (!appointment.getTenantId().equals(tenantId)) {
-            throw new IllegalArgumentException("Acceso denegado");
-        }
+		return appointmentRepository.save(existing);
+	}
 
-        return appointment;
-    }
+	@Transactional(readOnly = true)
+	public AppointmentEntity getById(UUID tenantId, UUID appointmentId) {
+		AppointmentEntity appointment = appointmentRepository.findById(appointmentId)
+				.orElseThrow(() -> new IllegalArgumentException("Cita no encontrada"));
 
-    @Transactional(readOnly = true)
-    public List<AppointmentEntity> getByDateRange(UUID tenantId,
-                                                   LocalDateTime start,
-                                                   LocalDateTime end) {
-        return appointmentRepository.findByTenantAndDateRange(tenantId, start, end);
-    }
+		if (!appointment.getTenantId().equals(tenantId)) {
+			throw new IllegalArgumentException("Acceso denegado");
+		}
 
-    @Transactional(readOnly = true)
-    public Page<AppointmentEntity> getByPatient(UUID tenantId, UUID patientId, Pageable pageable) {
-        return appointmentRepository.findByTenantIdAndPatientIdOrderByScheduledAtDesc(
-            tenantId, patientId, pageable);
-    }
+		return appointment;
+	}
 
-    @Transactional
-    public void confirm(UUID tenantId, UUID appointmentId) {
-        AppointmentEntity appointment = getById(tenantId, appointmentId);
-        appointment.setStatus("CONFIRMED");
-        appointment.setConfirmedAt(Instant.now());
-        appointmentRepository.save(appointment);
-    }
+	@Transactional(readOnly = true)
+	public List<AppointmentEntity> getByDateRange(UUID tenantId,
+			LocalDateTime start,
+			LocalDateTime end) {
+		return appointmentRepository.findByTenantAndDateRange(tenantId, start, end);
+	}
 
-    @Transactional
-    public void cancel(UUID tenantId, UUID appointmentId, String reason) {
-        AppointmentEntity appointment = getById(tenantId, appointmentId);
+	@Transactional(readOnly = true)
+	public Page<AppointmentEntity> getByPatient(UUID tenantId, UUID patientId, Pageable pageable) {
+		return appointmentRepository.findByTenantIdAndPatientIdOrderByScheduledAtDesc(
+				tenantId, patientId, pageable);
+	}
 
-        if ("CANCELLED".equals(appointment.getStatus())) {
-            throw new IllegalArgumentException("La cita ya está cancelada");
-        }
+	@Transactional
+	public void confirm(UUID tenantId, UUID appointmentId) {
+		AppointmentEntity appointment = getById(tenantId, appointmentId);
+		appointment.setStatus("CONFIRMED");
+		appointment.setConfirmedAt(Instant.now());
+		appointmentRepository.save(appointment);
+	}
 
-        appointment.setStatus("CANCELLED");
-        appointment.setCancelledAt(Instant.now());
-        appointment.setCancellationReason(reason);
-        appointmentRepository.save(appointment);
-    }
+	@Transactional
+	public void cancel(UUID tenantId, UUID appointmentId, String reason) {
+		AppointmentEntity appointment = getById(tenantId, appointmentId);
 
-    @Transactional
-    public void complete(UUID tenantId, UUID appointmentId) {
-        AppointmentEntity appointment = getById(tenantId, appointmentId);
-        appointment.setStatus("COMPLETED");
-        appointmentRepository.save(appointment);
-    }
+		if ("CANCELLED".equals(appointment.getStatus())) {
+			throw new IllegalArgumentException("La cita ya está cancelada");
+		}
 
-    @Transactional
-    public void markNoShow(UUID tenantId, UUID appointmentId) {
-        AppointmentEntity appointment = getById(tenantId, appointmentId);
-        appointment.setStatus("NO_SHOW");
-        appointmentRepository.save(appointment);
-    }
+		appointment.setStatus("CANCELLED");
+		appointment.setCancelledAt(Instant.now());
+		appointment.setCancellationReason(reason);
+		appointmentRepository.save(appointment);
+	}
 
-    @Transactional
-    public void markReminderSent(UUID appointmentId, String reminderType) {
-        AppointmentEntity appointment = appointmentRepository.findById(appointmentId)
-            .orElseThrow(() -> new IllegalArgumentException("Cita no encontrada"));
+	@Transactional
+	public void complete(UUID tenantId, UUID appointmentId) {
+		AppointmentEntity appointment = getById(tenantId, appointmentId);
+		appointment.setStatus("COMPLETED");
+		appointmentRepository.save(appointment);
+	}
 
-        if ("24h".equals(reminderType)) {
-            appointment.setReminder24hSent(true);
-        } else if ("2h".equals(reminderType)) {
-            appointment.setReminder2hSent(true);
-        }
+	@Transactional
+	public void markNoShow(UUID tenantId, UUID appointmentId) {
+		AppointmentEntity appointment = getById(tenantId, appointmentId);
+		appointment.setStatus("NO_SHOW");
+		appointmentRepository.save(appointment);
+	}
 
-        appointmentRepository.save(appointment);
-    }
+	@Transactional
+	public void markReminderSent(UUID appointmentId, String reminderType) {
+		AppointmentEntity appointment = appointmentRepository.findById(appointmentId)
+				.orElseThrow(() -> new IllegalArgumentException("Cita no encontrada"));
 
-    @Transactional(readOnly = true)
-    public List<AppointmentEntity> getPendingReminders24h(LocalDateTime now, LocalDateTime windowEnd) {
-        return appointmentRepository.findPendingReminder24h(now, windowEnd);
-    }
+		if ("24h".equals(reminderType)) {
+			appointment.setReminder24hSent(true);
+		} else if ("2h".equals(reminderType)) {
+			appointment.setReminder2hSent(true);
+		}
 
-    @Transactional(readOnly = true)
-    public List<AppointmentEntity> getPendingReminders2h(LocalDateTime now, LocalDateTime windowEnd) {
-        return appointmentRepository.findPendingReminder2h(now, windowEnd);
-    }
+		appointmentRepository.save(appointment);
+	}
+
+	@Transactional(readOnly = true)
+	public List<AppointmentEntity> getPendingReminders24h(LocalDateTime now, LocalDateTime windowEnd) {
+		return appointmentRepository.findPendingReminder24h(now, windowEnd);
+	}
+
+	@Transactional(readOnly = true)
+	public List<AppointmentEntity> getPendingReminders2h(LocalDateTime now, LocalDateTime windowEnd) {
+		return appointmentRepository.findPendingReminder2h(now, windowEnd);
+	}
 }
