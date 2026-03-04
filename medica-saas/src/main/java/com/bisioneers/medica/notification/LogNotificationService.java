@@ -8,16 +8,14 @@ import java.util.UUID;
 
 /**
 
-- Implementación MVP que solo loguea los recordatorios.
+- Implementación fallback que solo loguea.
 - 
-- Para producción, reemplazar con EmailNotificationService y/o
-- WhatsAppNotificationService que implementen la misma interfaz.
-- 
-- Las properties de Twilio y SMTP ya existen en application.properties:
-- spring.mail.host, spring.mail.port, etc.
-- twilio.account-sid, twilio.auth-token, twilio.whatsapp-from
+- Usada cuando:
+- - Email y WhatsApp no están configurados
+- - Como fallback si ambos canales fallan
+- - En desarrollo/testing
  */
-@Service
+@Service("logNotificationService")
 public class LogNotificationService implements NotificationService {
 
 	private static final Logger log = LoggerFactory.getLogger(LogNotificationService.class);
@@ -26,11 +24,19 @@ public class LogNotificationService implements NotificationService {
 	public boolean sendAppointmentReminder(UUID tenantId, UUID patientId,
 			UUID appointmentId, String reminderType,
 			String message) {
-		log.info("REMINDER [{}] tenant={}, patient={}, appointment={}: {}",
+		log.info("[LOG] REMINDER [{}] tenant={}, patient={}, appointment={}: {}",
 				reminderType, tenantId, patientId, appointmentId, message);
-
-		// MVP: siempre retorna true (simulando envío exitoso)
-		// En producción, la implementación real retornaría false si el envío falla
 		return true;
+	}
+
+	@Override
+	public boolean send(String to, String subject, String body) {
+		log.info("[LOG] NOTIFICATION to={}, subject={}: {}", to, subject, body);
+		return true;
+	}
+
+	@Override
+	public String getChannel() {
+		return "LOG";
 	}
 }

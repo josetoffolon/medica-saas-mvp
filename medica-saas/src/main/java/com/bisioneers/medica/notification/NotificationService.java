@@ -4,27 +4,43 @@ import java.util.UUID;
 
 /**
 
-- Interfaz de notificaciones.
+- Interfaz de envío de notificaciones.
 - 
-- MVP: LogNotificationService (solo loguea, no envía realmente)
-- Fase 2: EmailNotificationService (SMTP) + WhatsAppNotificationService (Twilio)
+- Implementaciones:
+- - EmailNotificationService  → SMTP (Spring Mail)
+- - WhatsAppNotificationService → Twilio WhatsApp API
+- - LogNotificationService    → Solo loguea (fallback / dev)
 - 
-- Cada implementación puede coexistir — el job de recordatorios
-- inyecta la interfaz y la implementación activa se encarga del envío.
+- La selección de canal se hace en NotificationRouter,
+- que decide a cuál implementación delegar según los datos del paciente.
+- 
+- NOTA: Esta interfaz reemplaza la versión anterior (que solo tenía
+- sendAppointmentReminder). Los métodos ahora son más granulares.
  */
 public interface NotificationService {
 
 	/**
-  - Envía un recordatorio de cita al paciente.
+  - Envía un recordatorio de cita.
   - 
-  - @param tenantId      ID del tenant
-  - @param patientId     ID del paciente
-  - @param appointmentId ID de la cita
-  - @param reminderType  “24h” o “2h”
-  - @param message       mensaje del recordatorio
   - @return true si se envió correctamente
 	 */
 	boolean sendAppointmentReminder(UUID tenantId, UUID patientId,
 			UUID appointmentId, String reminderType,
 			String message);
+
+	/**
+  - Envía una notificación genérica a un destinatario.
+  - 
+  - @param to       email o número de teléfono (según implementación)
+  - @param subject  asunto (solo email, WhatsApp lo ignora)
+  - @param body     contenido del mensaje
+  - @return true si se envió correctamente
+	 */
+	boolean send(String to, String subject, String body);
+
+	/**
+  - Identificador del canal (para logging y routing).
+  - Ej: “EMAIL”, “WHATSAPP”, “LOG”
+	 */
+	String getChannel();
 }
