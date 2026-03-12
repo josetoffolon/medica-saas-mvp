@@ -1,6 +1,7 @@
 package com.bisioneers.medica.billing;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -18,117 +19,125 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 /**
- * Filtro que bloquea requests si la suscripción del tenant no está activa.
- * 
- * CAMBIOS:
- * - extractTenantId ahora usa TenantAware (interfaz que StaffUserPrincipal implementa)
- *   en vez de castear a Jwt directamente. Esto es consistente con el nuevo
- *   StaffJwtAuthenticationConverter que siempre produce StaffUserPrincipal.
- * - Se reemplazaron System.out.println por SLF4J Logger.
+
+- Filtro que verifica la suscripción del tenant.
+- 
+- CAMBIOS vs versión anterior:
+- - Soporta grace period: si el tenant está en gracia, deja pasar
+- pero agrega headers de warning para que el frontend muestre un banner.
+- - Headers de grace period:
+- X-Subscription-Status: GRACE_PERIOD
+- X-Grace-Period-End: 2026-03-15T00:00:00Z
+- 
+- Comportamiento:
+- ACTIVE        → deja pasar sin headers extra
+- GRACE_PERIOD  → deja pasar + headers de warning
+- PAST_DUE      → bloquea con HTTP 402
+- INACTIVE/NONE → bloquea con HTTP 402
  */
 @Component
 public class SubscriptionEnforcementFilter extends OncePerRequestFilter {
 
-    private static final Logger log = LoggerFactory.getLogger(SubscriptionEnforcementFilter.class);
+	private static final Logger log = LoggerFactory.getLogger(SubscriptionEnforcementFilter.class);
 
-    private final SubscriptionService subscriptionService;
+	private final SubscriptionService subscriptionService;
 
-    private static final List<String> WHITELIST_PREFIXES = List.of(
-            "/api/auth",
-            "/api/public",
-            "/billing/return",
-            "/api/billing/webhook",
-            "/actuator",
-            "/swagger-ui",
-            "/v3/api-docs"
-    );
+	private static final List<String> WHITELIST_PREFIXES = List.of(
+			"/api/auth",
+			"/api/public",
+			"/billing/return",
+			"/api/billing/webhook",
+			"/api/billing/checkout",
+			"/api/billing/status",
+			"/actuator",
+			"/swagger-ui",
+			"/v3/api-docs"
+			);
 
-    public SubscriptionEnforcementFilter(SubscriptionService subscriptionService) {
-        this.subscriptionService = subscriptionService;
-    }
+	public SubscriptionEnforcementFilter(SubscriptionService subscriptionService) {
+		this.subscriptionService = subscriptionService;
+	}
 
-    @Override
-    protected boolean shouldNotFilter(HttpServletRequest request) {
-        String path = request.getRequestURI();
-        return WHITELIST_PREFIXES.stream().anyMatch(path::startsWith);
-    }
+	@Override
+	protected boolean shouldNotFilter(HttpServletRequest request) {
+		String path = request.getRequestURI();
+		return WHITELIST_PREFIXES.stream().anyMatch(path::startsWith);
+	}
 
-    @Override
-    protected void doFilterInternal(HttpServletRequest request,
-                                    HttpServletResponse response,
-                                    FilterChain filterChain) throws IOException, ServletException {
+	@Override
+	protected void doFilterInternal(HttpServletRequest request,
+			HttpServletResponse response,
+			FilterChain filterChain) throws IOException, ServletException {
 
-        var auth = SecurityContextHolder.getContext().getAuthentication();
+		var auth = SecurityContextHolder.getContext().getAuthentication();
 
-        // Sin autenticación → dejar pasar (Spring Security manejará el 401)
-        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
-            filterChain.doFilter(request, response);
-            return;
-        }
+		// Sin autenticación → dejar pasar (Spring Security manejará el 401)
+		if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
+			filterChain.doFilter(request, response);
+			return;
+		}
 
-        // Solo verificar suscripción para roles de staff
-        boolean isStaff = auth.getAuthorities().stream().anyMatch(a ->
-                "ROLE_ADMIN".equals(a.getAuthority()) ||
-                "ROLE_MEDICO".equals(a.getAuthority()) ||
-                "ROLE_RECEPCION".equals(a.getAuthority()) ||
-                "ROLE_ASISTENTE".equals(a.getAuthority())
-        );
+		// Solo verificar suscripción para roles de staff
+		boolean isStaff = auth.getAuthorities().stream().anyMatch(a ->
+		"ROLE_ADMIN".equals(a.getAuthority()) ||
+		"ROLE_MEDICO".equals(a.getAuthority()) ||
+		"ROLE_RECEPCION".equals(a.getAuthority()) ||
+		"ROLE_ASISTENTE".equals(a.getAuthority())
+				);
 
-        if (!isStaff) {
-            filterChain.doFilter(request, response);
-            return;
-        }
+		if (!isStaff) {
+			filterChain.doFilter(request, response);
+			return;
+		}
 
-        // Extraer tenantId del principal (ahora siempre es TenantAware)
-        UUID tenantId = extractTenantId(auth.getPrincipal());
+		UUID tenantId = extractTenantId(auth.getPrincipal());
 
-        if (tenantId == null) {
-            log.warn("tenantId missing in principal for request: {}", request.getRequestURI());
-            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-            response.setContentType("application/json");
-            response.getWriter().write("{\"error\":\"tenantId_missing_in_principal\"}");
-            return;
-        }
+		if (tenantId == null) {
+			log.warn("tenantId missing in principal for request: {}", request.getRequestURI());
+			response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+			response.setContentType("application/json");
+			response.getWriter().write("{\"error\":\"tenantId_missing_in_principal\"}");
+			return;
+		}
 
-        boolean active = subscriptionService.isActive(tenantId);
-        log.debug("Subscription check for tenant {}: active={}", tenantId, active);
+		boolean active = subscriptionService.isActive(tenantId);
 
-        if (!active) {
-            response.setStatus(402);
-            response.setContentType("application/json");
-            response.setCharacterEncoding("UTF-8");
+		if (!active) {
+			// Suscripción completamente expirada (sin gracia o gracia agotada)
+			log.info("Subscription blocked: tenant={}, path={}", tenantId, request.getRequestURI());
+			response.setStatus(402);
+			response.setContentType("application/json");
+			response.setCharacterEncoding("UTF-8");
+			response.getWriter().write("""
+					{
+					  "error":"subscription_inactive",
+					  "message":"Tu suscripción ha expirado. Renueva para continuar.",
+					  "action":"renew",
+					  "checkoutUrl":"/api/billing/checkout"
+					}
+					""");
+			return;
+		}
 
-            String body = """
-            {
-              "error":"subscription_inactive",
-              "message":"Subscription is not active",
-              "action":"renew",
-              "checkoutUrl":"/api/billing/checkout"
-            }
-            """;
+		// Activa — verificar si está en grace period para agregar warning
+		boolean inGrace = subscriptionService.isInGracePeriod(tenantId);
+		if (inGrace) {
+			Instant graceEnd = subscriptionService.getGracePeriodEnd(tenantId);
+			response.setHeader("X-Subscription-Status", "GRACE_PERIOD");
+			if (graceEnd != null) {
+				response.setHeader("X-Grace-Period-End", graceEnd.toString());
+			}
+			log.debug("Grace period active: tenant={}, graceEnd={}", tenantId, graceEnd);
+		}
 
-            response.getWriter().write(body);
-            return;
-        }
+		filterChain.doFilter(request, response);
+	}
 
-        filterChain.doFilter(request, response);
-    }
-
-    /**
-     * Extrae tenantId del principal.
-     * 
-     * ANTES: casteaba a org.springframework.security.oauth2.jwt.Jwt
-     *        (fallaba cuando el converter custom producía StaffUserPrincipal)
-     * 
-     * AHORA: castea a TenantAware (interfaz que StaffUserPrincipal implementa)
-     *        Esto funciona siempre porque StaffJwtAuthenticationConverter 
-     *        garantiza que el principal es StaffUserPrincipal.
-     */
-    private UUID extractTenantId(Object principal) {
-        if (principal instanceof TenantAware tenantAware) {
-            return tenantAware.getTenantId();
-        }
-        log.warn("Principal is not TenantAware: {}", principal.getClass().getName());
-        return null;
-    }
+	private UUID extractTenantId(Object principal) {
+		if (principal instanceof TenantAware tenantAware) {
+			return tenantAware.getTenantId();
+		}
+		log.warn("Principal is not TenantAware: {}", principal.getClass().getName());
+		return null;
+	}
 }
