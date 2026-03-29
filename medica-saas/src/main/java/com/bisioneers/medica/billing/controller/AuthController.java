@@ -236,6 +236,7 @@ public class AuthController {
         tenant.setId(UUID.randomUUID());
         tenant.setDisplayName(request.tenantName());
         tenant.setAlias(request.tenantAlias());
+        tenant.setContactEmail(request.adminEmail());
         tenant.setActive(true);
         tenant = tenantRepository.save(tenant);
 

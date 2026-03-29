@@ -143,7 +143,7 @@ public class SubscriptionService {
 
 		sub.setStatus("ACTIVE");
 		sub.setCurrentPeriodStart(start);
-		sub.setCurrentPeriodEnd(start.plus(1, ChronoUnit.MONTHS));
+		sub.setCurrentPeriodEnd(start.plus(30, ChronoUnit.DAYS));
 		sub.setLastTransactionId(txId);
 
 		subscriptionRepository.save(sub);
