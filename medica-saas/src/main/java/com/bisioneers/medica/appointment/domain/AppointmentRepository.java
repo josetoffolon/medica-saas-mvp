@@ -43,7 +43,7 @@ public interface AppointmentRepository extends JpaRepository<AppointmentEntity, 
      * - Cita existente: [a.scheduled_at, a.scheduled_at + a.duration_minutes)
      */
     @Query(value =
-        "SELECT COUNT(*) > 0 FROM appointment a " +
+        "SELECT COUNT(*) FROM appointment a " +
         "WHERE a.tenant_id = :tenantId " +
         "AND a.status NOT IN ('CANCELLED', 'NO_SHOW') " +
         "AND a.scheduled_at < :endTime " +
@@ -51,7 +51,7 @@ public interface AppointmentRepository extends JpaRepository<AppointmentEntity, 
         "AND (:excludeId IS NULL OR a.id != :excludeId)",
         nativeQuery = true
     )
-    boolean hasConflict(
+    Long countConflicts(
         @Param("tenantId") byte[] tenantId,
         @Param("startTime") LocalDateTime startTime,
         @Param("endTime") LocalDateTime endTime,
@@ -63,7 +63,7 @@ public interface AppointmentRepository extends JpaRepository<AppointmentEntity, 
      * Usa default method para no duplicar la query.
      */
     default boolean hasConflict(UUID tenantId, LocalDateTime startTime, LocalDateTime endTime) {
-        return hasConflict(uuidToBytes(tenantId), startTime, endTime, null);
+        return countConflicts(uuidToBytes(tenantId), startTime, endTime, null) > 0;
     }
 
     /**
@@ -71,7 +71,7 @@ public interface AppointmentRepository extends JpaRepository<AppointmentEntity, 
      */
     default boolean hasConflictExcluding(UUID tenantId, LocalDateTime startTime, 
                                           LocalDateTime endTime, UUID excludeId) {
-        return hasConflict(uuidToBytes(tenantId), startTime, endTime, uuidToBytes(excludeId));
+        return countConflicts(uuidToBytes(tenantId), startTime, endTime, uuidToBytes(excludeId)) > 0;
     }
 
     /**
