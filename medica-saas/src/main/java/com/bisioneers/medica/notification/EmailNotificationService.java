@@ -44,6 +44,8 @@ public class EmailNotificationService implements NotificationService {
 		this.enabled = mailSender != null;
 
 		if (!enabled) {
+
+			log.debug("fromAddress: "+fromAddress, "mailSender: "+ mailSender);
 			log.warn("Email notifications DISABLED (MailSender not configured). "
 					+ "Set spring.mail.host and spring.mail.username to enable.");
 		}
