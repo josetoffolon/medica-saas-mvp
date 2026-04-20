@@ -46,7 +46,8 @@ import java.util.UUID;
 public class AuthController {
 
     private static final Logger log = LoggerFactory.getLogger(AuthController.class);
-
+    
+    private final MfaSessionStore mfaSessionStore;
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
     private final JwtDecoder jwtDecoder;
@@ -64,6 +65,7 @@ public class AuthController {
             StaffUserRepository staffUserRepository,
             TenantRepository tenantRepository,
             PasswordEncoder passwordEncoder,
+            MfaSessionStore mfaSessionStore,
             @Value("${security.jwt.expiration-minutes:60}") long accessTokenMinutes
     ) {
         this.authenticationManager = authenticationManager;
@@ -73,6 +75,7 @@ public class AuthController {
         this.staffUserRepository = staffUserRepository;
         this.tenantRepository = tenantRepository;
         this.passwordEncoder = passwordEncoder;
+        this.mfaSessionStore = mfaSessionStore;
         this.accessTokenMinutes = accessTokenMinutes;
     }
 
@@ -83,19 +86,20 @@ public class AuthController {
         Authentication auth = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.email(), request.password())
         );
-
         StaffUserPrincipal principal = (StaffUserPrincipal) auth.getPrincipal();
-
+     
+        StaffUserEntity user = staffUserRepository.findById(principal.getUserId()).orElseThrow();
+     
+        if (user.isMfaEnabled()) {
+            String mfaToken = mfaSessionStore.createSession(
+                    user.getId(), user.getTenantId(), user.getEmail());
+            return ResponseEntity.ok(LoginResponse.mfaChallenge(mfaToken));
+        }
+     
         String accessToken = jwtService.generateAccessToken(principal);
         String refreshToken = jwtService.generateRefreshToken(principal);
-
-        log.info("Login successful: user={}, tenant={}", principal.getUsername(), principal.getTenantAlias());
-
         return ResponseEntity.ok(new LoginResponse(
-                accessToken,
-                refreshToken,
-                accessTokenMinutes * 60
-        ));
+                accessToken, refreshToken, accessTokenMinutes * 60));
     }
 
     // ─── REFRESH TOKEN ────────────────────────────────────────────────
