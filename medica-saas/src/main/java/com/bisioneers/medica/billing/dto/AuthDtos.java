@@ -23,10 +23,15 @@ public final class AuthDtos {
             String accessToken,
             String refreshToken,
             long expiresIn,
-            String tokenType
+            Boolean mfaRequired,
+            String mfaSessionToken
     ) {
         public LoginResponse(String accessToken, String refreshToken, long expiresInSeconds) {
-            this(accessToken, refreshToken, expiresInSeconds, "Bearer");
+            this(accessToken, refreshToken, expiresInSeconds, null, null);
+        }
+     // Constructor para respuesta con MFA pendiente
+        public static LoginResponse mfaChallenge(String mfaSessionToken) {
+            return new LoginResponse((String) null, (String) null, (Long) null, true, mfaSessionToken);
         }
     }
 
