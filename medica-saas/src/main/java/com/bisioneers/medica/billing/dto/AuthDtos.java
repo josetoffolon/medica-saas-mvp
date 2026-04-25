@@ -22,7 +22,7 @@ public final class AuthDtos {
     public record LoginResponse(
             String accessToken,
             String refreshToken,
-            long expiresIn,
+            Long expiresIn,
             Boolean mfaRequired,
             String mfaSessionToken
     ) {
