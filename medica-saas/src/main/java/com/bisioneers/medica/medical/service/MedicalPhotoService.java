@@ -16,14 +16,14 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
-
-- Servicio de negocio para fotos médicas.
-- 
-- Maneja:
-- - Upload de fotos con almacenamiento delegado a MediaStorageService
-- - Metadata de fotos (tipo, área anatómica, consentimiento)
-- - Pareamiento de fotos antes/después
-- - Descarga de fotos
+ * Servicio de negocio para fotos médicas.
+ *
+ * Maneja:
+ * - Upload de fotos con almacenamiento delegado a MediaStorageService
+ * - Metadata de fotos (tipo, área anatómica, consentimiento)
+ * - Pareamiento de fotos antes/después
+ * - Descarga de fotos
+ * - Generación de URLs presignadas para previsualización
  */
 @Service
 public class MedicalPhotoService {
@@ -40,16 +40,14 @@ public class MedicalPhotoService {
 	// ─── UPLOAD ───────────────────────────────────────────────────────
 
 	/**
-  - Sube una foto médica: guarda archivo en storage + metadata en DB.
+	 * Sube una foto médica: guarda archivo en storage + metadata en DB.
 	 */
 	@Transactional
 	public MedicalPhotoEntity upload(UUID tenantId, PhotoMetadata metadata, MultipartFile file) {
 		UUID photoId = UUID.randomUUID();
 
-		// 1. Guardar archivo en storage
 		String storagePath = storageService.store(tenantId, metadata.patientId(), photoId, file);
 
-		// 2. Crear entidad con metadata
 		MedicalPhotoEntity entity = new MedicalPhotoEntity();
 		entity.setId(photoId);
 		entity.setTenantId(tenantId);
@@ -71,7 +69,6 @@ public class MedicalPhotoService {
 
 		MedicalPhotoEntity saved = photoRepository.save(entity);
 
-		// 3. Si tiene pairedPhotoId, actualizar la otra foto para enlazarla
 		if (metadata.pairedPhotoId() != null) {
 			photoRepository.findById(metadata.pairedPhotoId()).ifPresent(paired -> {
 				if (paired.getTenantId().equals(tenantId) && paired.getPairedPhotoId() == null) {
@@ -96,12 +93,10 @@ public class MedicalPhotoService {
 		}
 
 		return photo;
-
-
 	}
 
 	/**
-  - Todas las fotos de un paciente.
+	 * Todas las fotos de un paciente.
 	 */
 	@Transactional(readOnly = true)
 	public List<MedicalPhotoEntity> getByPatient(UUID tenantId, UUID patientId) {
@@ -109,7 +104,7 @@ public class MedicalPhotoService {
 	}
 
 	/**
-  - Fotos asociadas a un registro médico.
+	 * Fotos asociadas a un registro médico.
 	 */
 	@Transactional(readOnly = true)
 	public List<MedicalPhotoEntity> getByRecord(UUID tenantId, UUID recordId) {
@@ -117,7 +112,7 @@ public class MedicalPhotoService {
 	}
 
 	/**
-  - Fotos asociadas a una cita.
+	 * Fotos asociadas a una cita.
 	 */
 	@Transactional(readOnly = true)
 	public List<MedicalPhotoEntity> getByAppointment(UUID tenantId, UUID appointmentId) {
@@ -125,18 +120,16 @@ public class MedicalPhotoService {
 	}
 
 	/**
-  - Pares de fotos antes/después de un paciente.
+	 * Pares de fotos antes/después de un paciente.
 	 */
 	@Transactional(readOnly = true)
 	public List<PhotoPairResponse> getPairedPhotos(UUID tenantId, UUID patientId) {
 		List<MedicalPhotoEntity> photos =
 				photoRepository.findPairedPhotos(tenantId, patientId);
 
-		// Agrupar por pairedPhotoId para formar pares
 		Map<UUID, List<MedicalPhotoEntity>> groups = photos.stream()
 				.filter(p -> p.getPairedPhotoId() != null)
 				.collect(Collectors.groupingBy(p -> {
-					// Usar el menor UUID como key del grupo para evitar duplicados
 					UUID a = p.getId();
 					UUID b = p.getPairedPhotoId();
 					return a.compareTo(b) < 0 ? a : b;
@@ -155,7 +148,6 @@ public class MedicalPhotoService {
 
 				pairs.add(new PhotoPairResponse(before, after));
 			}
-
 		}
 
 		return pairs;
@@ -164,7 +156,7 @@ public class MedicalPhotoService {
 	// ─── DOWNLOAD ─────────────────────────────────────────────────────
 
 	/**
-  - Obtiene el InputStream de una foto para descarga/visualización.
+	 * Obtiene el InputStream de una foto para descarga/visualización.
 	 */
 	@Transactional(readOnly = true)
 	public InputStream downloadPhoto(UUID tenantId, UUID photoId) {
@@ -175,13 +167,12 @@ public class MedicalPhotoService {
 	// ─── DELETE ───────────────────────────────────────────────────────
 
 	/**
-  - Elimina una foto: borra archivo del storage + registro de la DB.
+	 * Elimina una foto: borra archivo del storage + registro de la DB.
 	 */
 	@Transactional
 	public void delete(UUID tenantId, UUID photoId) {
 		MedicalPhotoEntity photo = getById(tenantId, photoId);
 
-		// 1. Limpiar referencia en foto pareada
 		if (photo.getPairedPhotoId() != null) {
 			photoRepository.findById(photo.getPairedPhotoId()).ifPresent(paired -> {
 				if (paired.getPairedPhotoId() != null && paired.getPairedPhotoId().equals(photoId)) {
@@ -191,22 +182,38 @@ public class MedicalPhotoService {
 			});
 		}
 
-		// 2. Eliminar archivo del storage
 		storageService.delete(photo.getStoragePath());
-
-		// 3. Eliminar registro de la DB
 		photoRepository.delete(photo);
 	}
 
 	// ─── Mapper ───────────────────────────────────────────────────────
 
-	private PhotoResponse toResponse(MedicalPhotoEntity e) {
+	/**
+	 * Convierte la entidad a DTO de respuesta.
+	 *
+	 * IMPORTANTE: aquí es donde se genera la URL presignada de R2 (o local)
+	 * cada vez que se construye un response. La URL NO se guarda en BD —
+	 * se regenera en cada request porque expira en 5 minutos.
+	 */
+	public PhotoResponse toResponse(MedicalPhotoEntity e) {
+		String url = storageService.generateAccessUrl(e.getStoragePath());
 		return new PhotoResponse(
-				e.getId(), e.getPatientId(), e.getMedicalRecordId(),
-				e.getAppointmentId(), e.getPhotoType(), e.getStoragePath(),
-				e.getOriginalFilename(), e.getMimeType(), e.getFileSize(),
-				e.getCapturedAt(), e.getAnatomicalArea(), e.getNotes(),
-				e.isConsentGiven(), e.isPatientVisible(), e.getPairedPhotoId()
+				e.getId(),
+				e.getPatientId(),
+				e.getMedicalRecordId(),
+				e.getAppointmentId(),
+				e.getPhotoType(),
+				e.getStoragePath(),
+				url,
+				e.getOriginalFilename(),
+				e.getMimeType(),
+				e.getFileSize(),
+				e.getCapturedAt(),
+				e.getAnatomicalArea(),
+				e.getNotes(),
+				e.isConsentGiven(),
+				e.isPatientVisible(),
+				e.getPairedPhotoId()
 				);
 	}
 }

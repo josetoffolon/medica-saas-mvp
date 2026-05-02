@@ -9,113 +9,121 @@ import java.util.UUID;
  */
 public final class MedicalDtos {
 
-    private MedicalDtos() {}
+	private MedicalDtos() {}
 
-    // ═══════════════════════════════════════════════════════════════════
-    // MEDICAL RECORD DTOs
-    // ═══════════════════════════════════════════════════════════════════
+	// ═══════════════════════════════════════════════════════════════════
+	// MEDICAL RECORD DTOs
+	// ═══════════════════════════════════════════════════════════════════
 
-    public record CreateRecordRequest(
-            @NotNull UUID patientId,
-            UUID appointmentId,
-            LocalDateTime recordDate,
+	public record CreateRecordRequest(
+			@NotNull UUID patientId,
+			UUID appointmentId,
+			LocalDateTime recordDate,
 
-            @NotBlank @Size(max = 30)
-            String recordType,
+			@NotBlank @Size(max = 30)
+			String recordType,
 
-            @Size(max = 200)
-            String title,
+			@Size(max = 200)
+			String title,
 
-            @NotBlank
-            String content,
+			@NotBlank
+			String content,
 
-            @Size(max = 500)
-            String diagnosis,
+			@Size(max = 500)
+			String diagnosis,
 
-            String treatment,
-            String instructions,
-            Boolean patientVisible
-    ) {}
+			String treatment,
+			String instructions,
+			Boolean patientVisible
+			) {}
 
-    public record UpdateRecordRequest(
-            @Size(max = 30)
-            String recordType,
+	public record UpdateRecordRequest(
+			@Size(max = 30)
+			String recordType,
 
-            @Size(max = 200)
-            String title,
+			@Size(max = 200)
+			String title,
 
-            String content,
+			String content,
 
-            @Size(max = 500)
-            String diagnosis,
+			@Size(max = 500)
+			String diagnosis,
 
-            String treatment,
-            String instructions,
-            Boolean patientVisible
-    ) {}
+			String treatment,
+			String instructions,
+			Boolean patientVisible
+			) {}
 
-    public record RecordResponse(
-            UUID id,
-            UUID patientId,
-            UUID appointmentId,
-            LocalDateTime recordDate,
-            String recordType,
-            String title,
-            String content,
-            String diagnosis,
-            String treatment,
-            String instructions,
-            boolean signed,
-            boolean patientVisible
-    ) {}
+	public record RecordResponse(
+			UUID id,
+			UUID patientId,
+			UUID appointmentId,
+			LocalDateTime recordDate,
+			String recordType,
+			String title,
+			String content,
+			String diagnosis,
+			String treatment,
+			String instructions,
+			boolean signed,
+			boolean patientVisible
+			) {}
 
-    // ═══════════════════════════════════════════════════════════════════
-    // MEDICAL PHOTO DTOs
-    // ═══════════════════════════════════════════════════════════════════
+	// ═══════════════════════════════════════════════════════════════════
+	// MEDICAL PHOTO DTOs
+	// ═══════════════════════════════════════════════════════════════════
 
-    /**
-     * Metadata de la foto enviada como form fields junto al archivo.
-     * El archivo se envía como multipart "file".
-     */
-    public record PhotoMetadata(
-            @NotNull UUID patientId,
-            UUID medicalRecordId,
-            UUID appointmentId,
+	/**
+	 * Metadata de la foto enviada como form fields junto al archivo.
+	 * El archivo se envía como multipart "file".
+	 */
+	public record PhotoMetadata(
+			@NotNull UUID patientId,
+			UUID medicalRecordId,
+			UUID appointmentId,
 
-            @NotBlank @Size(max = 20)
-            String photoType,
+			@NotBlank @Size(max = 20)
+			String photoType,
 
-            @Size(max = 100)
-            String anatomicalArea,
+			@Size(max = 100)
+			String anatomicalArea,
 
-            @Size(max = 500)
-            String notes,
+			@Size(max = 500)
+			String notes,
 
-            Boolean consentGiven,
-            Boolean patientVisible,
-            UUID pairedPhotoId
-    ) {}
+			Boolean consentGiven,
+			Boolean patientVisible,
+			UUID pairedPhotoId
+			) {}
 
-    public record PhotoResponse(
-            UUID id,
-            UUID patientId,
-            UUID medicalRecordId,
-            UUID appointmentId,
-            String photoType,
-            String storagePath,
-            String originalFilename,
-            String mimeType,
-            Long fileSize,
-            LocalDateTime capturedAt,
-            String anatomicalArea,
-            String notes,
-            boolean consentGiven,
-            boolean patientVisible,
-            UUID pairedPhotoId
-    ) {}
+	/**
+	 * Response de una foto.
+	 *
+	 * El campo `url` contiene una URL presignada de Cloudflare R2 válida 5 min,
+	 * o una ruta local del backend si la foto está en filesystem.
+	 * NO se almacena en BD — se genera dinámicamente en cada request.
+	 */
+	public record PhotoResponse(
+			UUID id,
+			UUID patientId,
+			UUID medicalRecordId,
+			UUID appointmentId,
+			String photoType,
+			String storagePath,
+			String url,
+			String originalFilename,
+			String mimeType,
+			Long fileSize,
+			LocalDateTime capturedAt,
+			String anatomicalArea,
+			String notes,
+			boolean consentGiven,
+			boolean patientVisible,
+			UUID pairedPhotoId
+			) {}
 
-    public record PhotoPairResponse(
-            PhotoResponse before,
-            PhotoResponse after
-    ) {}
+	public record PhotoPairResponse(
+			PhotoResponse before,
+			PhotoResponse after
+			) {}
 }
