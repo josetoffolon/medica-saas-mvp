@@ -6,49 +6,37 @@ import java.io.InputStream;
 import java.util.UUID;
 
 /**
-
-- Abstracción de almacenamiento de archivos médicos.
-- 
-- MVP: LocalMediaStorageService (filesystem local)
-- Producción: reemplazar con S3MediaStorageService (AWS S3 / MinIO)
-- 
-- Convención de paths:
-- {tenantId}/{patientId}/photos/{photoId}_{originalFilename}
-  */
-  public interface MediaStorageService {
-
-/**
- * Almacena un archivo y retorna el path relativo donde quedó guardado.
+ * Abstracción de almacenamiento de archivos médicos.
  *
- * @param tenantId  ID del tenant (para aislar archivos por tenant)
- * @param patientId ID del paciente
- * @param photoId   ID de la foto (para nombre único)
- * @param file      archivo subido
- * @return path relativo del archivo almacenado
- */
-String store(UUID tenantId, UUID patientId, UUID photoId, MultipartFile file);
-
-/**
- * Obtiene un InputStream del archivo almacenado.
+ * Implementaciones:
+ *   - LocalMediaStorageService (archivos en /var/medica/uploads/)
+ *   - R2MediaStorageService (Cloudflare R2 / S3-compatible)
+ *   - HybridMediaStorageService (router: viejos en local, nuevos en R2)
  *
- * @param storagePath path relativo retornado por store()
- * @return InputStream del archivo
- */
-InputStream load(String storagePath);
-
-/**
- * Elimina un archivo del almacenamiento.
+ * Selección automática vía property: medica.storage.type=local|s3|hybrid
  *
- * @param storagePath path relativo retornado por store()
+ * IMPORTANTE: el método store() retorna una storageKey opaca que se
+ * guarda en BD. Para mostrarla en el frontend, llamar a generateAccessUrl()
+ * que retorna una URL temporal (en R2) o una ruta del backend (local).
  */
-void delete(String storagePath);
+public interface MediaStorageService {
 
-/**
- * Verifica si un archivo existe.
- *
- * @param storagePath path relativo
- * @return true si el archivo existe
- */
-boolean exists(String storagePath);
+	/**
+	 * Guarda un archivo y retorna la storageKey opaca que se persiste en BD.
+	 */
+	String store(UUID tenantId, UUID patientId, UUID photoId, MultipartFile file);
 
+	/** Recupera el contenido binario de un archivo guardado. */
+	InputStream load(String storageKey);
+
+	/** Elimina un archivo. Idempotente. */
+	void delete(String storageKey);
+
+	/**
+	 * Genera una URL para que el cliente acceda al archivo.
+	 *
+	 * - Local: retorna ruta del backend (ej: /api/medical/photos/local/{key})
+	 * - R2: retorna URL presignada de Cloudflare (válida 5 min)
+	 */
+	String generateAccessUrl(String storageKey);
 }
