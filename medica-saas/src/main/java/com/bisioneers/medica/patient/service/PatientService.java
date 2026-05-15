@@ -10,163 +10,165 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.UUID;
 
 /**
-
-- Servicio de negocio para pacientes.
-- 
-- CAMBIOS vs versión anterior:
-- - search() ahora usa searchMultiField (nombre, email, teléfono, documento)
-- - Agregado reactivate() para restaurar pacientes desactivados
-- - updateConsent() ya existía (sin cambios)
+ * Servicio de negocio para pacientes.
+ *
+ * Cambios v2 (Fase 1 - Doc 1):
+ *  - update() ahora copia todos los campos nuevos:
+ *    nombres en 4 partes, datos médicos, contacto de emergencia, nacionalidad
+ *  - El fullName se autogenera en @PrePersist/@PreUpdate, no necesita copiarse
  */
 @Service
 public class PatientService {
 
-	private final PatientRepository patientRepository;
+    private final PatientRepository patientRepository;
 
-	public PatientService(PatientRepository patientRepository) {
-		this.patientRepository = patientRepository;
-	}
+    public PatientService(PatientRepository patientRepository) {
+        this.patientRepository = patientRepository;
+    }
 
-	@Transactional
-	public PatientEntity create(PatientEntity patient) {
-		// Validar que no exista ya con ese email en el tenant
-		if (patient.getEmail() != null && !patient.getEmail().isBlank()) {
-			patientRepository.findByTenantIdAndEmail(patient.getTenantId(), patient.getEmail())
-			.ifPresent(existing -> {
-				throw new IllegalArgumentException(
-						"Ya existe un paciente con email: " + patient.getEmail());
-			});
-		}
+    @Transactional
+    public PatientEntity create(PatientEntity patient) {
+        // Validar email único en el tenant
+        if (patient.getEmail() != null && !patient.getEmail().isBlank()) {
+            patientRepository.findByTenantIdAndEmail(patient.getTenantId(), patient.getEmail())
+                    .ifPresent(existing -> {
+                        throw new IllegalArgumentException(
+                                "Ya existe un paciente con email: " + patient.getEmail());
+                    });
+        }
 
-		// Validar documento único si está presente
-		if (patient.getDocumentNumber() != null && !patient.getDocumentNumber().isBlank()) {
-			patientRepository.findByTenantIdAndDocumentNumber(
-					patient.getTenantId(), patient.getDocumentNumber())
-			.ifPresent(existing -> {
-				throw new IllegalArgumentException(
-						"Ya existe un paciente con documento: " + patient.getDocumentNumber());
-			});
-		}
+        // Validar documento único en el tenant
+        if (patient.getDocumentNumber() != null && !patient.getDocumentNumber().isBlank()) {
+            patientRepository.findByTenantIdAndDocumentNumber(
+                            patient.getTenantId(), patient.getDocumentNumber())
+                    .ifPresent(existing -> {
+                        throw new IllegalArgumentException(
+                                "Ya existe un paciente con documento: " + patient.getDocumentNumber());
+                    });
+        }
 
-		return patientRepository.save(patient);
+        return patientRepository.save(patient);
+    }
 
-	}
+    @Transactional
+    public PatientEntity update(UUID id, PatientEntity updates) {
+        PatientEntity existing = patientRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Paciente no encontrado"));
 
-	@Transactional
-	public PatientEntity update(UUID id, PatientEntity updates) {
-		PatientEntity existing = patientRepository.findById(id)
-				.orElseThrow(() -> new IllegalArgumentException("Paciente no encontrado"));
+        if (!existing.getTenantId().equals(updates.getTenantId())) {
+            throw new IllegalArgumentException("No se puede cambiar el tenant del paciente");
+        }
 
-		// Validar tenant (seguridad)
-		if (!existing.getTenantId().equals(updates.getTenantId())) {
-			throw new IllegalArgumentException("No se puede cambiar el tenant del paciente");
-		}
+        // Validar unicidad de email si cambió
+        if (updates.getEmail() != null && !updates.getEmail().isBlank()
+                && !updates.getEmail().equals(existing.getEmail())) {
+            patientRepository.findByTenantIdAndEmail(existing.getTenantId(), updates.getEmail())
+                    .ifPresent(dup -> {
+                        throw new IllegalArgumentException(
+                                "Ya existe un paciente con email: " + updates.getEmail());
+                    });
+        }
 
-		// Validar unicidad de email si cambió
-		if (updates.getEmail() != null && !updates.getEmail().isBlank()
-				&& !updates.getEmail().equals(existing.getEmail())) {
-			patientRepository.findByTenantIdAndEmail(existing.getTenantId(), updates.getEmail())
-			.ifPresent(dup -> {
-				throw new IllegalArgumentException(
-						"Ya existe un paciente con email: " + updates.getEmail());
-			});
-		}
+        // Validar unicidad de documento si cambió
+        if (updates.getDocumentNumber() != null && !updates.getDocumentNumber().isBlank()
+                && !updates.getDocumentNumber().equals(existing.getDocumentNumber())) {
+            patientRepository.findByTenantIdAndDocumentNumber(
+                            existing.getTenantId(), updates.getDocumentNumber())
+                    .ifPresent(dup -> {
+                        throw new IllegalArgumentException(
+                                "Ya existe un paciente con documento: " + updates.getDocumentNumber());
+                    });
+        }
 
-		// Validar unicidad de documento si cambió
-		if (updates.getDocumentNumber() != null && !updates.getDocumentNumber().isBlank()
-				&& !updates.getDocumentNumber().equals(existing.getDocumentNumber())) {
-			patientRepository.findByTenantIdAndDocumentNumber(
-					existing.getTenantId(), updates.getDocumentNumber())
-			.ifPresent(dup -> {
-				throw new IllegalArgumentException(
-						"Ya existe un paciente con documento: " + updates.getDocumentNumber());
-			});
-		}
+        // ─── Copiar campos al existente ───
+        // Nombres (4 componentes) — fullName se autoregenera en @PreUpdate
+        existing.setFirstName(updates.getFirstName());
+        existing.setMiddleName(updates.getMiddleName());
+        existing.setLastName(updates.getLastName());
+        existing.setSecondLastName(updates.getSecondLastName());
 
-		// Actualizar campos
-		existing.setFullName(updates.getFullName());
-		existing.setEmail(updates.getEmail());
-		existing.setPhone(updates.getPhone());
-		existing.setSecondaryPhone(updates.getSecondaryPhone());
-		existing.setDocumentType(updates.getDocumentType());
-		existing.setDocumentNumber(updates.getDocumentNumber());
-		existing.setBirthDate(updates.getBirthDate());
-		existing.setGender(updates.getGender());
-		existing.setAddress(updates.getAddress());
-		existing.setNotes(updates.getNotes());
-		existing.setPhotoConsent(updates.isPhotoConsent());
-		existing.setDataConsent(updates.isDataConsent());
+        // Contacto e identificación
+        existing.setEmail(updates.getEmail());
+        existing.setPhone(updates.getPhone());
+        existing.setSecondaryPhone(updates.getSecondaryPhone());
+        existing.setDocumentType(updates.getDocumentType());
+        existing.setDocumentNumber(updates.getDocumentNumber());
+        existing.setBirthDate(updates.getBirthDate());
+        existing.setGender(updates.getGender());
+        existing.setNationality(updates.getNationality());
+        existing.setAddress(updates.getAddress());
 
-		return patientRepository.save(existing);
+        // Datos médicos
+        existing.setMedicalConditions(updates.getMedicalConditions());
+        existing.setCurrentMedications(updates.getCurrentMedications());
+        existing.setAllergies(updates.getAllergies());
+        existing.setBloodType(updates.getBloodType());
 
-	}
+        // Contacto de emergencia
+        existing.setEmergencyContactName(updates.getEmergencyContactName());
+        existing.setEmergencyContactPhone(updates.getEmergencyContactPhone());
+        existing.setEmergencyContactRelation(updates.getEmergencyContactRelation());
 
-	@Transactional(readOnly = true)
-	public PatientEntity getById(UUID tenantId, UUID patientId) {
-		PatientEntity patient = patientRepository.findById(patientId)
-				.orElseThrow(() -> new IllegalArgumentException("Paciente no encontrado"));
+        // Notas / consentimientos
+        existing.setNotes(updates.getNotes());
+        existing.setPhotoConsent(updates.isPhotoConsent());
+        existing.setDataConsent(updates.isDataConsent());
 
-		if (!patient.getTenantId().equals(tenantId)) {
-			throw new IllegalArgumentException("Acceso denegado");
-		}
+        return patientRepository.save(existing);
+    }
 
-		return patient;
+    @Transactional(readOnly = true)
+    public PatientEntity getById(UUID tenantId, UUID patientId) {
+        PatientEntity patient = patientRepository.findById(patientId)
+                .orElseThrow(() -> new IllegalArgumentException("Paciente no encontrado"));
 
-	}
+        if (!patient.getTenantId().equals(tenantId)) {
+            throw new IllegalArgumentException("Acceso denegado");
+        }
 
-	@Transactional(readOnly = true)
-	public Page<PatientEntity> listActive(UUID tenantId, Pageable pageable) {
-		return patientRepository.findByTenantIdAndActiveTrue(tenantId, pageable);
-	}
+        return patient;
+    }
 
-	/**
-  - Búsqueda multi-campo: nombre, email, teléfono, documento.
-  - 
-  - CAMBIO: Antes solo buscaba por nombre (searchByName).
-  - Ahora busca en 4 campos simultáneamente.
-	 */
-	@Transactional(readOnly = true)
-	public Page<PatientEntity> search(UUID tenantId, String searchTerm, Pageable pageable) {
-		return patientRepository.searchMultiField(tenantId, searchTerm, pageable);
-	}
+    @Transactional(readOnly = true)
+    public Page<PatientEntity> listActive(UUID tenantId, Pageable pageable) {
+        return patientRepository.findByTenantIdAndActiveTrue(tenantId, pageable);
+    }
 
-	@Transactional
-	public void deactivate(UUID tenantId, UUID patientId) {
-		PatientEntity patient = getById(tenantId, patientId);
-		patient.setActive(false);
-		patientRepository.save(patient);
-	}
+    @Transactional(readOnly = true)
+    public Page<PatientEntity> search(UUID tenantId, String searchTerm, Pageable pageable) {
+        return patientRepository.searchMultiField(tenantId, searchTerm, pageable);
+    }
 
-	/**
-  - Reactivar un paciente previamente desactivado.
-	 */
-	@Transactional
-	public void reactivate(UUID tenantId, UUID patientId) {
-		PatientEntity patient = patientRepository.findById(patientId)
-				.orElseThrow(() -> new IllegalArgumentException("Paciente no encontrado"));
+    @Transactional
+    public void deactivate(UUID tenantId, UUID patientId) {
+        PatientEntity patient = getById(tenantId, patientId);
+        patient.setActive(false);
+        patientRepository.save(patient);
+    }
 
-		if (!patient.getTenantId().equals(tenantId)) {
-			throw new IllegalArgumentException("Acceso denegado");
-		}
+    @Transactional
+    public void reactivate(UUID tenantId, UUID patientId) {
+        PatientEntity patient = patientRepository.findById(patientId)
+                .orElseThrow(() -> new IllegalArgumentException("Paciente no encontrado"));
 
-		patient.setActive(true);
-		patientRepository.save(patient);
-	}
+        if (!patient.getTenantId().equals(tenantId)) {
+            throw new IllegalArgumentException("Acceso denegado");
+        }
 
-	/**
-  - Actualizar consentimientos del paciente.
-  - Este método ya existía pero no estaba expuesto en el controller.
-	 */
-	@Transactional
-	public void updateConsent(UUID tenantId, UUID patientId, boolean photoConsent, boolean dataConsent) {
-		PatientEntity patient = getById(tenantId, patientId);
-		patient.setPhotoConsent(photoConsent);
-		patient.setDataConsent(dataConsent);
-		patientRepository.save(patient);
-	}
+        patient.setActive(true);
+        patientRepository.save(patient);
+    }
 
-	@Transactional(readOnly = true)
-	public long countActive(UUID tenantId) {
-		return patientRepository.countByTenantIdAndActiveTrue(tenantId);
-	}
+    @Transactional
+    public void updateConsent(UUID tenantId, UUID patientId, boolean photoConsent, boolean dataConsent) {
+        PatientEntity patient = getById(tenantId, patientId);
+        patient.setPhotoConsent(photoConsent);
+        patient.setDataConsent(dataConsent);
+        patientRepository.save(patient);
+    }
+
+    @Transactional(readOnly = true)
+    public long countActive(UUID tenantId) {
+        return patientRepository.countByTenantIdAndActiveTrue(tenantId);
+    }
 }
