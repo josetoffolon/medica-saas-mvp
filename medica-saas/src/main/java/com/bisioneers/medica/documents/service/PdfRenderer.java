@@ -55,6 +55,8 @@ public class PdfRenderer {
 	 */
 	private String wrapInXhtml(String bodyHtml, String title) {
 		String safeTitle = title != null ? title : "Documento médico";
+		
+		String safeBody = sanitizeHtmlEntities(bodyHtml);
 
 		return """
 				<?xml version="1.0" encoding="UTF-8"?>
@@ -154,7 +156,7 @@ public class PdfRenderer {
 				%s
 				</body>
 				</html>
-				""".formatted(escapeXml(safeTitle), bodyHtml);
+				""".formatted(escapeXml(safeTitle), safeBody);
 	}
 
 	private static String escapeXml(String s) {
@@ -163,5 +165,19 @@ public class PdfRenderer {
 				.replace("<", "&lt;")
 				.replace(">", "&gt;")
 				.replace("\"", "&quot;");
+	}
+	
+	private String sanitizeHtmlEntities(String html) {
+	    if (html == null) return "";
+	    return html
+	        .replace("&nbsp;", "&#160;")
+	        .replace("&copy;", "&#169;")
+	        .replace("&reg;", "&#174;")
+	        .replace("&trade;", "&#8482;")
+	        .replace("&hellip;", "&#8230;")
+	        .replace("&mdash;", "&#8212;")
+	        .replace("&ndash;", "&#8211;")
+	        .replace("&laquo;", "&#171;")
+	        .replace("&raquo;", "&#187;");
 	}
 }

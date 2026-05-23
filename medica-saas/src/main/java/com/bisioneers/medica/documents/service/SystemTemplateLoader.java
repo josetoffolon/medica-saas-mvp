@@ -251,7 +251,7 @@ public class SystemTemplateLoader {
 			</p>
 
 			<div class="signature-block">
-			    <div class="signature-line">&nbsp;</div>
+			    <div class="signature-line">&#160;</div>
 			    <div class="signature-label">Firma del paciente: {{patient.fullName}}</div>
 			    <br/>
 			    <div class="signature-label">Fecha: {{document.day}} / {{document.month}} / {{document.year}}</div>
@@ -458,7 +458,7 @@ public class SystemTemplateLoader {
 			<div class="signature-block">
 			    <div class="signature-label">Nombre del paciente: <strong>{{patient.fullName}}</strong></div>
 			    <br/>
-			    <div class="signature-line">&nbsp;</div>
+			    <div class="signature-line">&#160;</div>
 			    <div class="signature-label">Firma del paciente</div>
 			    <br/>
 			    <div class="signature-label">Fecha: {{document.day}} / {{document.month}} / {{document.year}}</div>
