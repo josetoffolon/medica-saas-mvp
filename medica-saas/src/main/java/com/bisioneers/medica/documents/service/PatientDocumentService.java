@@ -1,6 +1,11 @@
 package com.bisioneers.medica.documents.service;
 
-import com.bisioneers.medica.documents.domain.DocumentTemplateEntity;
+import com.bisioneers.medica.consent.domain.ConsentTemplateVersionEntity;
+import com.bisioneers.medica.consent.domain.ConsentVersionStatus;
+import com.bisioneers.medica.consent.dto.ConsentDtos.RenderedConsentResponse;
+import com.bisioneers.medica.consent.service.ConsentTemplateService;
+import com.bisioneers.medica.consent.service.ConsentVariableRenderer;
+import com.bisioneers.medica.consent.service.ConsentVariableRenderer.RenderContext;
 import com.bisioneers.medica.documents.domain.PatientDocumentEntity;
 import com.bisioneers.medica.documents.domain.PatientDocumentRepository;
 import com.bisioneers.medica.medical.storage.MediaStorageService;
@@ -14,44 +19,52 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.MessageDigest;
-import java.time.Instant;
+import java.time.ZoneId;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
 /**
- * Servicio para gestión del ciclo de vida de documentos del paciente.
+ * Servicio para el ciclo de vida de documentos del paciente.
  *
- * Flujo de estados:
- *   1. generate() → crea documento en DRAFT (HTML editable)
- *   2. prepareForSigning() → renderiza PDF base, estado READY_TO_SIGN
- *   3. signDigital() / uploadSigned() → almacena PDF firmado, estado SIGNED
+ * Flujo:
+ *  1. generate() → renderiza ConsentTemplateVersion PUBLISHED con datos del paciente,
+ *     crea PatientDocument en DRAFT con snapshot del HTML renderizado
+ *  2. updateContent() → permite ajustes manuales mientras está DRAFT
+ *  3. prepareForSigning() → genera PDF desde HTML, sube a R2, status READY_TO_SIGN
+ *  4. [Fase 3] signDigital() → embed firma canvas, hash, SIGNED
+ *  5. [Fase 4] uploadSigned() → recibe PDF escaneado firmado, SIGNED
+ *
+ * REFACTOR: ahora apunta al módulo `consent` para obtener plantillas.
+ * El MergeFieldEngine viejo fue reemplazado por ConsentVariableRenderer
+ * (mejor: escapa valores HTML).
  */
 @Service
 public class PatientDocumentService {
 
 	private static final Logger log = LoggerFactory.getLogger(PatientDocumentService.class);
+	private static final ZoneId DEFAULT_ZONE = ZoneId.of("America/Panama");
 
 	private final PatientDocumentRepository documentRepository;
-	private final DocumentTemplateService templateService;
+	private final ConsentTemplateService consentService;
+	private final ConsentVariableRenderer consentRenderer;
 	private final PatientRepository patientRepository;
 	private final TenantRepository tenantRepository;
-	private final MergeFieldEngine mergeEngine;
 	private final PdfRenderer pdfRenderer;
 	private final MediaStorageService storageService;
 
 	public PatientDocumentService(PatientDocumentRepository documentRepository,
-			DocumentTemplateService templateService,
+			ConsentTemplateService consentService,
+			ConsentVariableRenderer consentRenderer,
 			PatientRepository patientRepository,
 			TenantRepository tenantRepository,
-			MergeFieldEngine mergeEngine,
 			PdfRenderer pdfRenderer,
 			MediaStorageService storageService) {
 		this.documentRepository = documentRepository;
-		this.templateService = templateService;
+		this.consentService = consentService;
+		this.consentRenderer = consentRenderer;
 		this.patientRepository = patientRepository;
 		this.tenantRepository = tenantRepository;
-		this.mergeEngine = mergeEngine;
 		this.pdfRenderer = pdfRenderer;
 		this.storageService = storageService;
 	}
@@ -59,13 +72,22 @@ public class PatientDocumentService {
 	// ─── GENERATE (DRAFT) ─────────────────────────────────────────────
 
 	/**
-	 * Genera un documento DRAFT desde una plantilla y un paciente.
-	 * Aplica los merge fields y guarda el HTML renderizado como snapshot.
+	 * Genera un documento DRAFT renderizando una versión PUBLISHED del consent.
+	 * El HTML renderizado se guarda como snapshot inmutable.
 	 */
 	@Transactional
 	public PatientDocumentEntity generate(UUID tenantId, UUID patientId,
-			UUID templateId, String customTitle) {
+			UUID consentVersionId, String customTitle) {
 
+		// 1. Validar la versión del consent
+		ConsentTemplateVersionEntity version = consentService.getVersion(tenantId, consentVersionId);
+		if (version.getStatus() != ConsentVersionStatus.PUBLISHED) {
+			throw new IllegalStateException(
+					"Solo se pueden generar documentos desde versiones PUBLISHED. " +
+							"Estado actual: " + version.getStatus());
+		}
+
+		// 2. Cargar paciente + tenant
 		PatientEntity patient = patientRepository.findById(patientId)
 				.orElseThrow(() -> new IllegalArgumentException("Paciente no encontrado"));
 		if (!patient.getTenantId().equals(tenantId)) {
@@ -75,19 +97,23 @@ public class PatientDocumentService {
 		TenantEntity tenant = tenantRepository.findById(tenantId)
 				.orElseThrow(() -> new IllegalArgumentException("Tenant no encontrado"));
 
-		DocumentTemplateEntity template = templateService.getById(tenantId, templateId);
+		// 3. Renderizar con valores reales del paciente
+		RenderContext ctx = buildContext(patient, tenant);
+		RenderedConsentResponse rendered = consentRenderer.render(
+				version.getId(), version.getVersionNumber(),
+				version.getTitle(), version.getContentHtml(), ctx);
 
-		String rendered = mergeEngine.render(template.getContentHtml(), patient, tenant);
-
+		// 4. Crear PatientDocument con snapshot
 		PatientDocumentEntity doc = new PatientDocumentEntity();
 		doc.setTenantId(tenantId);
 		doc.setPatientId(patientId);
-		doc.setTemplateId(templateId);
-		doc.setTemplateName(template.getName());
-		doc.setDocumentType(template.getDocumentType());
+		doc.setConsentTemplateVersionId(version.getId());
+		doc.setConsentTemplateId(version.getTemplateId());
+		doc.setTemplateName(version.getTitle());
+		doc.setTemplateVersionNumber(version.getVersionNumber());
 		doc.setTitle(customTitle != null && !customTitle.isBlank()
-				? customTitle : template.getName());
-		doc.setRenderedHtml(rendered);
+				? customTitle : version.getTitle());
+		doc.setRenderedHtml(rendered.renderedHtml());
 		doc.setStatus("DRAFT");
 
 		return documentRepository.save(doc);
@@ -106,7 +132,7 @@ public class PatientDocumentService {
 		return documentRepository.findByTenantIdAndPatientIdOrderByGeneratedAtDesc(tenantId, patientId);
 	}
 
-	// ─── UPDATE (solo DRAFT) ──────────────────────────────────────────
+	// ─── UPDATE CONTENT (solo DRAFT) ──────────────────────────────────
 
 	@Transactional
 	public PatientDocumentEntity updateContent(UUID tenantId, UUID id, String renderedHtml, String title) {
@@ -123,10 +149,6 @@ public class PatientDocumentService {
 
 	// ─── PREPARE FOR SIGNING ──────────────────────────────────────────
 
-	/**
-	 * Genera el PDF base desde el HTML actual y lo guarda en R2.
-	 * Cambia el estado a READY_TO_SIGN.
-	 */
 	@Transactional
 	public PatientDocumentEntity prepareForSigning(UUID tenantId, UUID id) {
 		PatientDocumentEntity doc = getById(tenantId, id);
@@ -147,7 +169,7 @@ public class PatientDocumentService {
 		return documentRepository.save(doc);
 	}
 
-	// ─── ARCHIVE ──────────────────────────────────────────────────────
+	// ─── ARCHIVE / DELETE ─────────────────────────────────────────────
 
 	@Transactional
 	public PatientDocumentEntity archive(UUID tenantId, UUID id) {
@@ -159,8 +181,6 @@ public class PatientDocumentService {
 		return documentRepository.save(doc);
 	}
 
-	// ─── DELETE (solo DRAFT) ──────────────────────────────────────────
-
 	@Transactional
 	public void deleteDraft(UUID tenantId, UUID id) {
 		PatientDocumentEntity doc = getById(tenantId, id);
@@ -170,7 +190,43 @@ public class PatientDocumentService {
 		documentRepository.delete(doc);
 	}
 
-	// ─── Hashing (para uso en Fase 3 cuando se firme) ─────────────────
+	// ─── Helpers ──────────────────────────────────────────────────────
+
+	/**
+	 * Construye el RenderContext desde las entidades reales.
+	 */
+	private RenderContext buildContext(PatientEntity p, TenantEntity t) {
+		String genderLabel = "M".equals(p.getGender()) ? "Masculino"
+				: "F".equals(p.getGender()) ? "Femenino" : null;
+
+		return new RenderContext(
+				DEFAULT_ZONE,
+				p.getFullName(),
+				p.getFirstName(),
+				p.getLastName(),
+				p.getDocumentType(),
+				p.getDocumentNumber(),
+				p.getEmail(),
+				p.getPhone(),
+				p.getBirthDate(),
+				genderLabel,
+				p.getNationality(),
+				p.getAddress(),
+				p.getBloodType(),
+				p.getAllergies(),
+				p.getMedicalConditions(),
+				p.getCurrentMedications(),
+				p.getEmergencyContactName(),
+				p.getEmergencyContactPhone(),
+				p.getEmergencyContactRelation(),
+				null, // appointment (Fase futura)
+				null, null, // service (Fase futura)
+				t != null ? t.getDisplayName() : null,
+						t != null ? t.getAddress() : null,
+								t != null ? t.getContactPhone() : null,
+										t != null ? t.getContactEmail() : null
+				);
+	}
 
 	public static String sha256(byte[] data) {
 		try {

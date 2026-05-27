@@ -7,73 +7,44 @@ import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * DTOs del módulo documents (instancias firmables).
+ *
+ * REFACTOR: las plantillas ahora viven en el módulo `consent`.
+ * Aquí solo manejamos el ciclo de vida del documento del paciente.
+ */
 public final class DocumentDtos {
 
 	private DocumentDtos() {}
 
-	// ═══════════════════════════════════════════════════════════════════
-	// TEMPLATES
-	// ═══════════════════════════════════════════════════════════════════
-
-	public record CreateTemplateRequest(
-			@NotBlank @Size(max = 200) String name,
-			@NotBlank @Size(max = 50) String documentType,
-			@NotBlank String contentHtml,
-			@Size(max = 500) String description
-			) {}
-
-	public record UpdateTemplateRequest(
-			@NotBlank @Size(max = 200) String name,
-			@NotBlank String contentHtml,
-			@Size(max = 500) String description
-			) {}
-
-	public record TemplateResponse(
-			UUID id,
-			String name,
-			String documentType,
-			String contentHtml,
-			String description,
-			int version,
-			boolean active,
-			boolean isSystem
-			) {}
-
-	public record TemplateSummaryResponse(
-			UUID id,
-			String name,
-			String documentType,
-			String description,
-			int version,
-			boolean isSystem
-			) {}
-
-	// ═══════════════════════════════════════════════════════════════════
-	// PATIENT DOCUMENTS
-	// ═══════════════════════════════════════════════════════════════════
-
+	/**
+	 * Para generar un documento desde una versión PUBLISHED de consent.
+	 */
 	public record GenerateDocumentRequest(
 			@NotNull UUID patientId,
-			@NotNull UUID templateId,
-			String title
+			@NotNull UUID consentTemplateVersionId,
+			UUID appointmentId,   // opcional para resolver {{appointment.*}}
+			UUID serviceId,       // opcional para resolver {{service.*}}
+			String title          // opcional para personalizar título
 			) {}
 
 	public record UpdateDocumentContentRequest(
-			@NotBlank String renderedHtml,
+			@NotBlank @Size(max = 100_000) String renderedHtml,
 			String title
 			) {}
 
 	public record DocumentResponse(
 			UUID id,
 			UUID patientId,
-			UUID templateId,
+			UUID consentTemplateVersionId,
+			UUID consentTemplateId,
 			String templateName,
-			String documentType,
+			Integer templateVersionNumber,
 			String title,
 			String renderedHtml,
 			String status,
-			String pdfUrl,                  // presigned URL (5 min) or null
-			String signedPdfUrl,            // presigned URL (5 min) or null
+			String pdfUrl,
+			String signedPdfUrl,
 			String signatureMethod,
 			String integrityHash,
 			Instant generatedAt,
@@ -85,7 +56,7 @@ public final class DocumentDtos {
 			UUID id,
 			UUID patientId,
 			String templateName,
-			String documentType,
+			Integer templateVersionNumber,
 			String title,
 			String status,
 			String signatureMethod,
