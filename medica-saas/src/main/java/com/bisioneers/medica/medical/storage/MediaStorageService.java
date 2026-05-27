@@ -26,6 +26,22 @@ public interface MediaStorageService {
 	 */
 	String store(UUID tenantId, UUID patientId, UUID photoId, MultipartFile file);
 
+	/**
+	 * Guarda contenido binario generado por el sistema (ej: PDFs).
+	 * Útil cuando el archivo no viene de un upload sino que se genera
+	 * en backend (renderizado de PDFs desde plantillas).
+	 *
+	 * @param tenantId   tenant del archivo
+	 * @param patientId  paciente al que pertenece
+	 * @param entityId   UUID lógico (documentId, photoId, etc.)
+	 * @param bytes      contenido binario
+	 * @param mimeType   ej: "application/pdf"
+	 * @param filename   nombre lógico (ej: "consent-12345.pdf")
+	 * @return storage key opaca para guardar en BD
+	 */
+	String storeBytes(UUID tenantId, UUID patientId, UUID entityId,
+			byte[] bytes, String mimeType, String filename);
+
 	/** Recupera el contenido binario de un archivo guardado. */
 	InputStream load(String storageKey);
 

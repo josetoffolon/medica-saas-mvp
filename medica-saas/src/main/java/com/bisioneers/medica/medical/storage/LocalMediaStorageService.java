@@ -148,4 +148,34 @@ public class LocalMediaStorageService implements MediaStorageService {
 		}
 		return filename.replaceAll("[^a-zA-Z0-9._-]", "_");
 	}
+	
+	@Override
+	public String storeBytes(UUID tenantId, UUID patientId, UUID entityId,
+	                          byte[] bytes, String mimeType, String filename) {
+	    if (bytes == null || bytes.length == 0) {
+	        throw new IllegalArgumentException("El contenido está vacío");
+	    }
+	    if (bytes.length > MAX_FILE_SIZE) {
+	        throw new IllegalArgumentException("El contenido excede el tamaño máximo");
+	    }
+
+	    String safeFilename = sanitizeFilename(filename);
+	    String relativePath = String.format("%s/%s/documents/%s_%s",
+	            tenantId, patientId, entityId, safeFilename);
+
+	    Path targetPath = rootPath.resolve(relativePath).normalize();
+	    if (!targetPath.startsWith(rootPath)) {
+	        throw new IllegalArgumentException("Path traversal detected");
+	    }
+
+	    try {
+	        Files.createDirectories(targetPath.getParent());
+	        Files.write(targetPath, bytes);
+	        log.debug("Stored {} bytes locally: {}", bytes.length, relativePath);
+	    } catch (IOException e) {
+	        throw new RuntimeException("Failed to store bytes: " + relativePath, e);
+	    }
+
+	    return relativePath;
+	}
 }

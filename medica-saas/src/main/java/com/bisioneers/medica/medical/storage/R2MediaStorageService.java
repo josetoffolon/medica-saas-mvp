@@ -152,4 +152,31 @@ public class R2MediaStorageService implements MediaStorageService {
 		if (filename == null || filename.isBlank()) return "photo.jpg";
 		return filename.replaceAll("[^a-zA-Z0-9._-]", "_");
 	}
+	
+	@Override
+	public String storeBytes(UUID tenantId, UUID patientId, UUID entityId,
+	                          byte[] bytes, String mimeType, String filename) {
+	    if (bytes == null || bytes.length == 0) {
+	        throw new IllegalArgumentException("El contenido está vacío");
+	    }
+
+	    String safeFilename = sanitizeFilename(filename);
+	    String key = String.format("tenants/%s/patients/%s/documents/%s_%s",
+	            tenantId, patientId, entityId, safeFilename);
+
+	    try {
+	        PutObjectRequest request = PutObjectRequest.builder()
+	                .bucket(bucket)
+	                .key(key)
+	                .contentType(mimeType != null ? mimeType : "application/octet-stream")
+	                .contentLength((long) bytes.length)
+	                .build();
+
+	        s3Client.putObject(request, RequestBody.fromBytes(bytes));
+	        log.info("Stored {} bytes at R2 key: {}", bytes.length, key);
+	        return key;
+	    } catch (S3Exception e) {
+	        throw new RuntimeException("Failed to upload to R2: " + e.getMessage(), e);
+	    }
+	}
 }

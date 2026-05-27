@@ -75,4 +75,13 @@ public class HybridMediaStorageService implements MediaStorageService {
 		}
 		return localStorage;
 	}
+	
+	/**
+	 * Nuevos archivos generados por el sistema (PDFs) van a R2.
+	 */
+	@Override
+	public String storeBytes(UUID tenantId, UUID patientId, UUID entityId,
+	                          byte[] bytes, String mimeType, String filename) {
+	    return r2Storage.storeBytes(tenantId, patientId, entityId, bytes, mimeType, filename);
+	}
 }
