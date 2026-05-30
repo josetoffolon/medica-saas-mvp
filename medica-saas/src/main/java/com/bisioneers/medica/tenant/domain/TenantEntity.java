@@ -75,6 +75,16 @@ public class TenantEntity extends AuditedEntity {
     @Lob
     @Column(columnDefinition = "TEXT")
     private String settings;
+    
+    /**
+     * Duración del link de firma remota en horas.
+     * Default: 24 horas.
+     * Rango sensato: 1 a 168 horas (1 semana).
+     *
+     * Configurable por ADMIN desde Configuración de la clínica.
+     */
+    @Column(name = "signature_link_hours", nullable = false)
+    private int signatureLinkHours = 24;
 
     @PrePersist
     void prePersist() {
@@ -153,5 +163,12 @@ public class TenantEntity extends AuditedEntity {
 
     public void setSettings(String settings) {
         this.settings = settings;
+    }
+    
+    public int getSignatureLinkHours() { 
+    	return signatureLinkHours; 
+    }
+    public void setSignatureLinkHours(int h) { 
+    	this.signatureLinkHours = h;
     }
 }

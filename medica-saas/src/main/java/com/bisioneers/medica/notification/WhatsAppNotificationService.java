@@ -155,4 +155,5 @@ public class WhatsAppNotificationService implements NotificationService {
 		}
 		return "whatsapp:" + clean;
 	}
+
 }

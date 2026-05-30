@@ -28,7 +28,16 @@ public final class TenantManagementDtos {
 			String address,
 
 			@Size(max = 50)
-			String timezone
+			String timezone,
+			
+			/**
+             * Duración del link de firma remota en horas.
+             * Rango: 1 a 168 horas (1 semana).
+             * Si llega null, se mantiene el valor actual del tenant.
+             */
+            @Min(value = 1, message = "Mínimo 1 hora")
+            @Max(value = 168, message = "Máximo 168 horas (1 semana)")
+            Integer signatureLinkHours
 			) {}
 
 	/**
@@ -49,7 +58,9 @@ public final class TenantManagementDtos {
 			String address,
 			String timezone,
 			boolean active,
-			String settings
+			String settings,
+			@Min(1) @Max(168)
+			Integer signatureLinkHours
 			) {}
 
 	// ═══════════════════════════════════════════════════════════════════

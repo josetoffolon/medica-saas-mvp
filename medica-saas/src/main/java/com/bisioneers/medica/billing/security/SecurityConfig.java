@@ -62,7 +62,8 @@ public class SecurityConfig {
                     "/api/auth/login",
                     "/api/auth/register",
                     "/api/auth/refresh",
-                    "/api/auth/mfa/verify"
+                    "/api/auth/mfa/verify",
+                    "/api/public/**"
                 ).permitAll()
                 // Billing webhook + return (Paguelo Fácil)
                 .requestMatchers(

@@ -54,6 +54,7 @@ public class TenantService {
 		if (request.contactPhone() != null) tenant.setContactPhone(request.contactPhone());
 		if (request.address() != null) tenant.setAddress(request.address());
 		if (request.timezone() != null) tenant.setTimezone(request.timezone());
+		if (request.signatureLinkHours() != null) tenant.setSignatureLinkHours(request.signatureLinkHours());
 
 		return tenantRepository.save(tenant);
 
