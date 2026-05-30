@@ -43,4 +43,5 @@ public interface NotificationService {
   - Ej: “EMAIL”, “WHATSAPP”, “LOG”
 	 */
 	String getChannel();
+	
 }

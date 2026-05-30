@@ -86,10 +86,16 @@ public class TenantController {
 
 	private TenantResponse toResponse(TenantEntity e) {
 		return new TenantResponse(
-				e.getId(), e.getAlias(), e.getDisplayName(),
-				e.getContactEmail(), e.getContactPhone(),
-				e.getAddress(), e.getTimezone(),
-				e.isActive(), e.getSettings()
+				e.getId(),
+				e.getAlias(), 
+				e.getDisplayName(),
+				e.getContactEmail(),
+				e.getContactPhone(),
+				e.getAddress(),
+				e.getTimezone(),
+				e.isActive(),
+				e.getSettings(),
+				e.getSignatureLinkHours()
 				);
 	}
 }

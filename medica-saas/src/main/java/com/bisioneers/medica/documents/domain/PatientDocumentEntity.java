@@ -114,6 +114,18 @@ public class PatientDocumentEntity extends TenantScopedEntity {
 	@JdbcTypeCode(SqlTypes.BINARY)
 	@Column(name = "staff_user_id", columnDefinition = "BINARY(16)")
 	private UUID staffUserId;
+	
+	/**
+	 * Staff que acompañó físicamente la firma (testigo).
+	 * Distinto a staffUserId que es el creador del documento.
+	 *
+	 * En flujo IN_PERSON, witness es el principal autenticado al confirmar.
+	 * En flujo REMOTE queda null (firma sin presencia física de staff).
+	 */
+	@JdbcTypeCode(SqlTypes.BINARY)
+	@Column(name = "witness_staff_user_id", columnDefinition = "BINARY(16)")
+	private UUID witnessStaffUserId;
+
 
 	@PrePersist
 	void prePersist() {
@@ -163,4 +175,6 @@ public class PatientDocumentEntity extends TenantScopedEntity {
 	public void setSignerUserAgent(String ua) { this.signerUserAgent = ua; }
 	public UUID getStaffUserId() { return staffUserId; }
 	public void setStaffUserId(UUID id) { this.staffUserId = id; }
+	public UUID getWitnessStaffUserId() { return witnessStaffUserId; }
+	public void setWitnessStaffUserId(UUID id) { this.witnessStaffUserId = id; }
 }
