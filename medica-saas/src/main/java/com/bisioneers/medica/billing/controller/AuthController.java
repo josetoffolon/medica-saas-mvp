@@ -1,6 +1,7 @@
 package com.bisioneers.medica.billing.controller;
 
 import com.bisioneers.medica.billing.dto.AuthDtos.*;
+import jakarta.servlet.http.HttpServletRequest;
 import com.bisioneers.medica.billing.security.*;
 import com.bisioneers.medica.tenant.domain.TenantEntity;
 import com.bisioneers.medica.tenant.domain.TenantRepository;
@@ -56,6 +57,7 @@ public class AuthController {
     private final TenantRepository tenantRepository;
     private final PasswordEncoder passwordEncoder;
     private final long accessTokenMinutes;
+    private final LoginAttemptService loginAttemptService;
 
     public AuthController(
             AuthenticationManager authenticationManager,
@@ -66,7 +68,8 @@ public class AuthController {
             TenantRepository tenantRepository,
             PasswordEncoder passwordEncoder,
             MfaSessionStore mfaSessionStore,
-            @Value("${security.jwt.expiration-minutes:60}") long accessTokenMinutes
+            @Value("${security.jwt.expiration-minutes:60}") long accessTokenMinutes,
+            LoginAttemptService loginAttemptService
     ) {
         this.authenticationManager = authenticationManager;
         this.jwtService = jwtService;
@@ -77,29 +80,56 @@ public class AuthController {
         this.passwordEncoder = passwordEncoder;
         this.mfaSessionStore = mfaSessionStore;
         this.accessTokenMinutes = accessTokenMinutes;
+        this.loginAttemptService = loginAttemptService;
     }
 
     // ─── LOGIN ────────────────────────────────────────────────────────
 
     @PostMapping("/login")
-    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
-        Authentication auth = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(request.email(), request.password())
-        );
+    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request, HttpServletRequest httpReq) {
+        String email = request.email() == null ? "" : request.email().toLowerCase();
+        String userKey = "login-user:" + email;
+        String ipKey   = "login-ip:" + extractClientIp(httpReq);
+
+        if (loginAttemptService.isBlocked(userKey) || loginAttemptService.isBlocked(ipKey)) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of(
+                    "error", "Cuenta o IP bloqueada temporalmente por demasiados intentos. Intenta más tarde."));
+        }
+
+        Authentication auth;
+        try {
+            auth = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(request.email(), request.password()));
+        } catch (org.springframework.security.core.AuthenticationException ex) {
+            loginAttemptService.recordFailure(userKey);
+            loginAttemptService.recordFailure(ipKey);
+            log.warn("Login fallido para {}: {}", email, ex.getMessage());
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Usuario o contraseña inválidos"));
+        }
+
+        loginAttemptService.recordSuccess(userKey);
+        loginAttemptService.recordSuccess(ipKey);
+
         StaffUserPrincipal principal = (StaffUserPrincipal) auth.getPrincipal();
-     
         StaffUserEntity user = staffUserRepository.findById(principal.getUserId()).orElseThrow();
-     
+
         if (user.isMfaEnabled()) {
-            String mfaToken = mfaSessionStore.createSession(
-                    user.getId(), user.getTenantId(), user.getEmail());
+            String mfaToken = mfaSessionStore.createSession(user.getId(), user.getTenantId(), user.getEmail());
             return ResponseEntity.ok(LoginResponse.mfaChallenge(mfaToken));
         }
-     
+
         String accessToken = jwtService.generateAccessToken(principal);
         String refreshToken = jwtService.generateRefreshToken(principal);
-        return ResponseEntity.ok(new LoginResponse(
-                accessToken, refreshToken, accessTokenMinutes * 60));
+        return ResponseEntity.ok(new LoginResponse(accessToken, refreshToken, accessTokenMinutes * 60));
+    }
+
+    private String extractClientIp(HttpServletRequest req) {
+        String xff = req.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
+        String xri = req.getHeader("X-Real-IP");
+        if (xri != null && !xri.isBlank()) return xri.trim();
+        return req.getRemoteAddr();
     }
 
     // ─── REFRESH TOKEN ────────────────────────────────────────────────

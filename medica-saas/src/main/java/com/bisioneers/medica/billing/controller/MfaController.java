@@ -1,6 +1,7 @@
 package com.bisioneers.medica.billing.controller;
 
 import com.bisioneers.medica.billing.security.*;
+import jakarta.servlet.http.HttpServletRequest;
 import com.bisioneers.medica.billing.security.MfaService.MfaSetupResult;
 import com.bisioneers.medica.billing.security.MfaService.MfaStatus;
 import com.bisioneers.medica.billing.security.MfaSessionStore.MfaSession;
@@ -41,18 +42,21 @@ public class MfaController {
     private final StaffUserRepository staffUserRepository;
     private final TenantRepository tenantRepository;
     private final long accessTokenMinutes;
+    private final LoginAttemptService loginAttemptService;
 
     public MfaController(MfaService mfaService,
                          MfaSessionStore mfaSessionStore,
                          JwtService jwtService,
                          StaffUserRepository staffUserRepository,
                          TenantRepository tenantRepository,
+                         LoginAttemptService loginAttemptService,
                          @Value("${security.jwt.expiration-minutes:60}") long accessTokenMinutes) {
         this.mfaService = mfaService;
         this.mfaSessionStore = mfaSessionStore;
         this.jwtService = jwtService;
         this.staffUserRepository = staffUserRepository;
         this.tenantRepository = tenantRepository;
+        this.loginAttemptService = loginAttemptService;
         this.accessTokenMinutes = accessTokenMinutes;
     }
 
@@ -99,25 +103,37 @@ public class MfaController {
      * Se invoca DESPUÉS del POST /api/auth/login que retornó mfaRequired:true.
      */
     @PostMapping("/verify")
-    public ResponseEntity<?> verify(@RequestBody VerifyRequest request) {
-        MfaSession session = mfaSessionStore.consume(request.mfaSessionToken());
+    public ResponseEntity<?> verify(@RequestBody VerifyRequest request, HttpServletRequest httpReq) {
+        String ipKey = "mfa-verify:" + extractClientIp(httpReq);
+
+        if (loginAttemptService.isBlocked(ipKey)) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of(
+                    "error", "Demasiados intentos. Intenta de nuevo más tarde."));
+        }
+
+        MfaSession session = mfaSessionStore.peek(request.mfaSessionToken());
         if (session == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
-                    "error", "Sesión MFA expirada o inválida. Inicia sesión nuevamente."
-            ));
+                    "error", "Sesión MFA expirada o inválida. Inicia sesión nuevamente."));
         }
 
         if (!mfaService.verifyCode(session.userId(), request.code())) {
-            // Recrear sesión para que el usuario reintente sin volver a poner password
-            String newToken = mfaSessionStore.createSession(
-                    session.userId(), session.tenantId(), session.email());
+            loginAttemptService.recordFailure(ipKey);
+            int remaining = mfaSessionStore.registerFailedAttempt(request.mfaSessionToken());
+            if (remaining <= 0) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
+                        "error", "Demasiados intentos fallidos. Inicia sesión nuevamente."));
+            }
+            // Mismo token: el usuario reintenta sin re-loguearse
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
-                    "error", "Código incorrecto",
-                    "mfaSessionToken", newToken
-            ));
+                    "error", "Código incorrecto. Te quedan " + remaining + " intento(s).",
+                    "mfaSessionToken", request.mfaSessionToken()));
         }
 
-        // MFA OK → cargar usuario y tenant para construir el Principal
+        // Éxito → consumir sesión y limpiar contadores
+        mfaSessionStore.invalidate(request.mfaSessionToken());
+        loginAttemptService.recordSuccess(ipKey);
+
         StaffUserEntity user = staffUserRepository.findById(session.userId()).orElse(null);
         if (user == null || !user.isEnabled()) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
@@ -136,8 +152,15 @@ public class MfaController {
                 "accessToken", accessToken,
                 "refreshToken", refreshToken,
                 "expiresInSeconds", accessTokenMinutes * 60,
-                "tokenType", "Bearer"
-        ));
+                "tokenType", "Bearer"));
+    }
+
+    private String extractClientIp(HttpServletRequest req) {
+        String xff = req.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
+        String xri = req.getHeader("X-Real-IP");
+        if (xri != null && !xri.isBlank()) return xri.trim();
+        return req.getRemoteAddr();
     }
 
     // ─── Request/Response DTOs ────────────────────────

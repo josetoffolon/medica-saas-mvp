@@ -25,6 +25,7 @@ import java.util.UUID;
 public class MfaService {
 
     private static final Logger log = LoggerFactory.getLogger(MfaService.class);
+    private final SecretCipherService secretCipher;
 
     private final StaffUserRepository staffRepository;
     private final TotpService totpService;
@@ -34,10 +35,12 @@ public class MfaService {
     public MfaService(StaffUserRepository staffRepository,
                       TotpService totpService,
                       PasswordEncoder passwordEncoder,
+                      SecretCipherService secretCipher,
                       @Value("${app.name:Medica SaaS}") String issuerName) {
         this.staffRepository = staffRepository;
         this.totpService = totpService;
         this.passwordEncoder = passwordEncoder;
+        this.secretCipher = secretCipher;
         this.issuerName = issuerName;
     }
 
@@ -60,7 +63,7 @@ public class MfaService {
         String secret = totpService.generateSecret();
         String otpAuthUri = totpService.buildOtpAuthUri(secret, user.getEmail(), issuerName);
 
-        user.setMfaSecret(secret);
+        user.setMfaSecret(secretCipher.encrypt(secret));
         user.setMfaEnabled(false); // aún no activo, solo preparado
         staffRepository.save(user);
 
@@ -83,7 +86,7 @@ public class MfaService {
         if (user.getMfaSecret() == null) {
             throw new IllegalStateException("Primero ejecuta setup() para generar el secreto");
         }
-        if (!totpService.verifyCode(user.getMfaSecret(), code)) {
+        if (!totpService.verifyCode(secretCipher.decrypt(user.getMfaSecret()), code)) {
             throw new IllegalArgumentException("Código inválido. Verifica que escaneaste el QR correctamente.");
         }
 
@@ -108,7 +111,7 @@ public class MfaService {
         if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
             throw new IllegalArgumentException("Contraseña incorrecta");
         }
-        if (!totpService.verifyCode(user.getMfaSecret(), code)) {
+        if (!totpService.verifyCode(secretCipher.decrypt(user.getMfaSecret()), code)){
             throw new IllegalArgumentException("Código MFA inválido");
         }
 
@@ -129,7 +132,7 @@ public class MfaService {
         if (user == null || !user.isMfaEnabled() || user.getMfaSecret() == null) {
             return false;
         }
-        return totpService.verifyCode(user.getMfaSecret(), code);
+        return totpService.verifyCode(secretCipher.decrypt(user.getMfaSecret()), code);
     }
 
     /** Estado MFA del usuario para mostrar en settings */
