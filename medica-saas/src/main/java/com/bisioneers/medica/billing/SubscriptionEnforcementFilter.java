@@ -100,37 +100,35 @@ public class SubscriptionEnforcementFilter extends OncePerRequestFilter {
 			return;
 		}
 
-		boolean active = subscriptionService.isActive(tenantId);
+		// Una sola lectura (cacheada) en vez de 3 queries
+		SubscriptionStatusSnapshot subscription = subscriptionService.getEnforcementSnapshot(tenantId);
 
-		if (!active) {
-			// Suscripción completamente expirada (sin gracia o gracia agotada)
-			log.info("Subscription blocked: tenant={}, path={}", tenantId, request.getRequestURI());
-			response.setStatus(402);
-			response.setContentType("application/json");
-			response.setCharacterEncoding("UTF-8");
-			response.getWriter().write("""
-					{
-					  "error":"subscription_inactive",
-					  "message":"Tu suscripción ha expirado. Renueva para continuar.",
-					  "action":"renew",
-					  "checkoutUrl":"/api/billing/checkout"
-					}
-					""");
-			return;
+		if (!subscription.active()) {
+		    log.info("Subscription blocked: tenant={}, path={}", tenantId, request.getRequestURI());
+		    response.setStatus(402);
+		    response.setContentType("application/json");
+		    response.setCharacterEncoding("UTF-8");
+		    response.getWriter().write("""
+		            {
+		              "error":"subscription_inactive",
+		              "message":"Tu suscripción ha expirado. Renueva para continuar.",
+		              "action":"renew",
+		              "checkoutUrl":"/api/billing/checkout"
+		            }
+		            """);
+		    return;
 		}
 
-		// Activa — verificar si está en grace period para agregar warning
-		boolean inGrace = subscriptionService.isInGracePeriod(tenantId);
-		if (inGrace) {
-			Instant graceEnd = subscriptionService.getGracePeriodEnd(tenantId);
-			response.setHeader("X-Subscription-Status", "GRACE_PERIOD");
-			if (graceEnd != null) {
-				response.setHeader("X-Grace-Period-End", graceEnd.toString());
-			}
-			log.debug("Grace period active: tenant={}, graceEnd={}", tenantId, graceEnd);
+		// Activa — agregar warning si está en grace period
+		if (subscription.inGracePeriod()) {
+		    response.setHeader("X-Subscription-Status", "GRACE_PERIOD");
+		    if (subscription.graceEnd() != null) {
+		        response.setHeader("X-Grace-Period-End", subscription.graceEnd().toString());
+		    }
+		    log.debug("Grace period active: tenant={}, graceEnd={}", tenantId, subscription.graceEnd());
 		}
 
-		filterChain.doFilter(request, response);
+		filterChain.doFilter(request, response);;
 	}
 
 	private UUID extractTenantId(Object principal) {

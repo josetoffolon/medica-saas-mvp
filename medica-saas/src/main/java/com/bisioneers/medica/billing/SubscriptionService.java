@@ -38,14 +38,61 @@ public class SubscriptionService {
 	private static final Logger log = LoggerFactory.getLogger(SubscriptionService.class);
 
 	private final SubscriptionRepository subscriptionRepository;
+	private final SubscriptionStatusCache statusCache;
 	private final int gracePeriodDays;
 
 	public SubscriptionService(
 			SubscriptionRepository subscriptionRepository,
+			SubscriptionStatusCache statusCache,
 			@Value("${billing.grace-period-days:5}") int gracePeriodDays
 			) {
 		this.subscriptionRepository = subscriptionRepository;
+		this.statusCache = statusCache;
 		this.gracePeriodDays = gracePeriodDays;
+	}
+	
+	/**
+	 * Snapshot de estado para el enforcement filter. Cacheado con TTL corto.
+	 * Reemplaza las 3 lecturas previas (isActive/isInGracePeriod/getGracePeriodEnd)
+	 * por una sola.
+	 */
+	public SubscriptionStatusSnapshot getEnforcementSnapshot(UUID tenantId) {
+	    return statusCache.get(tenantId, () -> computeSnapshot(tenantId));
+	}
+
+	/**
+	 * Calcula el snapshot desde UNA sola lectura de BD.
+	 * (Sin @Transactional explícito: el findById de Spring Data ya gestiona su
+	 * propia transacción y SubscriptionEntity no tiene asociaciones lazy.)
+	 */
+	private SubscriptionStatusSnapshot computeSnapshot(UUID tenantId) {
+	    Instant now = Instant.now();
+
+	    return subscriptionRepository.findById(tenantId)
+	            .map(sub -> {
+	                String rawStatus = sub.getStatus();
+	                Instant end = sub.getCurrentPeriodEnd();
+
+	                // No ACTIVE o sin fecha de fin → no puede usar el sistema
+	                if (!"ACTIVE".equalsIgnoreCase(rawStatus) || end == null) {
+	                    return new SubscriptionStatusSnapshot(false, false, null,
+	                            rawStatus == null ? "INACTIVE" : rawStatus.toUpperCase());
+	                }
+
+	                Instant graceEnd = end.plus(gracePeriodDays, ChronoUnit.DAYS);
+
+	                if (end.isAfter(now)) {
+	                    // Periodo vigente
+	                    return new SubscriptionStatusSnapshot(true, false, graceEnd, "ACTIVE");
+	                }
+	                if (graceEnd.isAfter(now)) {
+	                    // Vencido pero dentro de la gracia
+	                    return new SubscriptionStatusSnapshot(true, true, graceEnd, "GRACE_PERIOD");
+	                }
+	                // Vencido y gracia agotada
+	                return new SubscriptionStatusSnapshot(false, false, graceEnd, "PAST_DUE");
+	            })
+	            .orElse(new SubscriptionStatusSnapshot(false, false, null, "NONE"));
 	}
 
 	/**
@@ -58,24 +105,9 @@ public class SubscriptionService {
 	 * El SubscriptionEnforcementFilter usa este método para decidir si
 	 * bloquear con 402 o dejar pasar (con o sin warning).
 	 */
-	@Transactional(readOnly = true)
+
 	public boolean isActive(UUID tenantId) {
-		return subscriptionRepository.findById(tenantId)
-				.map(sub -> {
-					if (!"ACTIVE".equalsIgnoreCase(sub.getStatus())) return false;
-					Instant end = sub.getCurrentPeriodEnd();
-					if (end == null) return false;
-
-					Instant now = Instant.now();
-
-					// Periodo vigente → activo
-					if (end.isAfter(now)) return true;
-
-					// Periodo vencido pero dentro de grace period → aún activo
-					Instant graceEnd = end.plus(gracePeriodDays, ChronoUnit.DAYS);
-					return graceEnd.isAfter(now);
-				})
-				.orElse(false);
+	    return getEnforcementSnapshot(tenantId).active();
 	}
 
 	/**
@@ -84,39 +116,18 @@ public class SubscriptionService {
 	 * True cuando el periodo ya venció pero aún tiene días de gracia.
 	 * El filter usa esto para agregar un header de warning al response.
 	 */
-	@Transactional(readOnly = true)
+
 	public boolean isInGracePeriod(UUID tenantId) {
-		return subscriptionRepository.findById(tenantId)
-				.map(sub -> {
-					if (!"ACTIVE".equalsIgnoreCase(sub.getStatus())) return false;
-					Instant end = sub.getCurrentPeriodEnd();
-					if (end == null) return false;
-
-					Instant now = Instant.now();
-
-					// Si el periodo aún no venció, no está en gracia
-					if (end.isAfter(now)) return false;
-
-					// Si ya venció, verificar si está dentro de grace period
-					Instant graceEnd = end.plus(gracePeriodDays, ChronoUnit.DAYS);
-					return graceEnd.isAfter(now);
-				})
-				.orElse(false);
+	    return getEnforcementSnapshot(tenantId).inGracePeriod();
 	}
 
 	/**
 	 * Calcula cuándo termina el grace period para un tenant.
 	 * Retorna null si no tiene suscripción o no está en gracia.
 	 */
-	@Transactional(readOnly = true)
+
 	public Instant getGracePeriodEnd(UUID tenantId) {
-		return subscriptionRepository.findById(tenantId)
-				.map(sub -> {
-					Instant end = sub.getCurrentPeriodEnd();
-					if (end == null) return null;
-					return end.plus(gracePeriodDays, ChronoUnit.DAYS);
-				})
-				.orElse(null);
+	    return getEnforcementSnapshot(tenantId).graceEnd();
 	}
 
 	@Transactional
@@ -147,6 +158,7 @@ public class SubscriptionService {
 		sub.setLastTransactionId(txId);
 
 		subscriptionRepository.save(sub);
+		statusCache.invalidate(tenantId);
 
 		log.info("Subscription activated: tenant={}, period={} to {}",
 				tenantId, sub.getCurrentPeriodStart(), sub.getCurrentPeriodEnd());
