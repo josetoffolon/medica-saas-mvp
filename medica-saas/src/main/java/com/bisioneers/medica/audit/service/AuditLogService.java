@@ -1,6 +1,7 @@
 package com.bisioneers.medica.audit.service;
 
 import com.bisioneers.medica.audit.domain.AuditLogEntity;
+import org.springframework.beans.factory.annotation.Value;
 import com.bisioneers.medica.audit.domain.AuditLogRepository;
 import com.bisioneers.medica.billing.security.StaffUserPrincipal;
 import jakarta.servlet.http.HttpServletRequest;
@@ -26,9 +27,12 @@ public class AuditLogService {
 	private static final Logger log = LoggerFactory.getLogger(AuditLogService.class);
 
 	private final AuditLogRepository repository;
+	private final UUID systemTenantId;
 
-	public AuditLogService(AuditLogRepository repository) {
+	public AuditLogService( AuditLogRepository repository,
+			@Value("${app.audit.system-tenant-id}") UUID systemTenantId) {
 		this.repository = repository;
+		this.systemTenantId = systemTenantId;
 	}
 
 	// ─── Record Methods ────────────────────────────────
@@ -49,22 +53,24 @@ public class AuditLogService {
 			entry.setDetails(details);
 			entry.setTimestamp(Instant.now());
 
-			// Extract user from security context
 			Authentication auth = SecurityContextHolder.getContext().getAuthentication();
 			if (auth != null && auth.getPrincipal() instanceof StaffUserPrincipal principal) {
 				entry.setTenantId(principal.getTenantId());
 				entry.setUserId(principal.getUserId());
 				entry.setUserEmail(principal.getUsername());
+			} else {
+				// Operación de sistema (jobs, webhooks): sin principal.
+				// Asignamos el tenant SYSTEM para no violar el NOT NULL
+				// y conservar el rastro de auditoría.
+				entry.setTenantId(systemTenantId);
+				entry.setUserEmail("system");
 			}
 
-			// Extract IP from request
 			entry.setIpAddress(extractClientIp());
 
 			repository.save(entry);
-			log.debug("Audit: {} {} {} by {}", action, entityType, entityId,
-					entry.getUserEmail());
+			log.debug("Audit: {} {} {} by {}", action, entityType, entityId, entry.getUserEmail());
 		} catch (Exception e) {
-			// Auditoría nunca debe romper la operación principal
 			log.error("Failed to record audit log: {}", e.getMessage());
 		}
 	}
