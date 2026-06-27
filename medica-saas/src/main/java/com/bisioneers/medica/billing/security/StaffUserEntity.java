@@ -38,7 +38,7 @@ public class StaffUserEntity extends AuditedEntity{
 	@Column(name = "mfa_enabled", nullable = false)
 	private boolean mfaEnabled = false;
 
-	@Column(name = "mfa_secret", length = 64)
+	@Column(name = "mfa_secret", length = 255)
 	private String mfaSecret;
 
 	@Column(name = "mfa_activated_at")

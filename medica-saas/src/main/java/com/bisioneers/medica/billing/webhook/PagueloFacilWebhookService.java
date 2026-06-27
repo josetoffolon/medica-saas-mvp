@@ -1,6 +1,8 @@
 package com.bisioneers.medica.billing.webhook;
 
 import com.bisioneers.medica.billing.BillingService;
+import com.bisioneers.medica.billing.domain.PaymentTransactionEntity;
+import com.bisioneers.medica.billing.domain.PaymentTransactionRepository;
 import com.bisioneers.medica.billing.webhook.WebhookSecurityValidator.ValidationResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.UUID;
 
 /**
@@ -35,81 +38,104 @@ import java.util.UUID;
 public class PagueloFacilWebhookService {
 
 	private static final Logger log = LoggerFactory.getLogger(PagueloFacilWebhookService.class);
+	private final PaymentTransactionRepository txRepo;
 
 	private final BillingService billingService;
 	private final WebhookSecurityValidator securityValidator;
 	private final ObjectMapper mapper;
 
 	public PagueloFacilWebhookService(
+			PaymentTransactionRepository txRepo,
 			BillingService billingService,
 			WebhookSecurityValidator securityValidator,
 			ObjectMapper mapper
 			) {
+		this.txRepo = txRepo;
 		this.billingService = billingService;
 		this.securityValidator = securityValidator;
 		this.mapper = mapper;
 	}
 
-	/**
-  - Procesa un webhook de Paguelo Fácil.
-  - 
-  - @param request  el HttpServletRequest (para validación de IP/firma)
-  - @param rawBody  el body crudo del webhook
-  - @return resultado del procesamiento
-	 */
 	@Transactional
 	public WebhookResult process(HttpServletRequest request, String rawBody) {
 
-		// 1. Validar seguridad (IP + firma)
-		ValidationResult validation = securityValidator.validate(request, rawBody);
-		if (!validation.accepted()) {
-			log.warn("Webhook rejected: {}", validation.reason());
-			return WebhookResult.rejected(validation.reason());
-		}
+	    ValidationResult validation = securityValidator.validate(request, rawBody);
+	    if (!validation.accepted()) {
+	        log.warn("Webhook rejected: {}", validation.reason());
+	        return WebhookResult.rejected(validation.reason());
+	    }
 
-		// 2. Parsear payload
-		try {
-			JsonNode json = mapper.readTree(rawBody);
+	    try {
+	        JsonNode json = mapper.readTree(rawBody);
 
-			String estado = json.path("Estado").asText(null);
-			String oper = json.path("Oper").asText(null);
-			String parm1 = json.path("PARM_1").asText(null);
+	        // Formato WEBHOOK real (doc PF): status 1/0, codOper, totalPay
+	        int status = json.path("status").asInt(-1);
+	        String codOper = json.path("codOper").asText(null);
 
-			if (parm1 == null || parm1.isBlank()) {
-				log.warn("Webhook ignored: missing PARM_1 (transactionId)");
-				return WebhookResult.ignored("Missing PARM_1");
-			}
+	        // PARM_1 puede o no venir según configuración de PF.
+	        String parm1 = json.path("PARM_1").asText(null);
 
-			UUID txId;
-			try {
-				txId = UUID.fromString(parm1);
-			} catch (IllegalArgumentException e) {
-				log.warn("Webhook ignored: invalid PARM_1 format: {}", parm1);
-				return WebhookResult.ignored("Invalid PARM_1 format");
-			}
+	        // Correlación: preferimos PARM_1 (nuestro txId); si no viene,
+	        // buscamos la transacción por codOper (guardado como providerRef).
+	        PaymentTransactionEntity tx = resolveTransaction(parm1, codOper);
+	        if (tx == null) {
+	            log.warn("Webhook ignored: no se pudo correlacionar (parm1={}, codOper={})",
+	                    parm1, codOper);
+	            return WebhookResult.ignored("Transaction not found");
+	        }
 
-			log.info("Webhook received: estado={}, oper={}, txId={}", estado, oper, txId);
+	        log.info("Webhook received: status={}, codOper={}, txId={}", status, codOper, tx.getId());
 
-			// 3. Procesar según estado
-			if ("Aprobada".equalsIgnoreCase(estado)) {
-				billingService.markAsPaid(txId, oper, rawBody);
-				log.info("Webhook processed: transaction {} marked as PAID", txId);
-				return WebhookResult.processed("PAID");
+	        if (status == 1) {
+	            BigDecimal paidAmount = extractAmount(json);
+	            billingService.markAsPaid(tx.getId(), codOper, paidAmount, rawBody);
+	            return WebhookResult.processed("PAID");
+	        } else if (status == 0) {
+	            billingService.markAsDeclined(tx.getId(), codOper, rawBody);
+	            return WebhookResult.processed("DECLINED");
+	        } else {
+	            log.warn("Webhook ignored: status desconocido '{}'", status);
+	            return WebhookResult.ignored("Unknown status: " + status);
+	        }
 
-			} else if ("Denegada".equalsIgnoreCase(estado)) {
-				billingService.markAsDeclined(txId, oper, rawBody);
-				log.info("Webhook processed: transaction {} marked as DECLINED", txId);
-				return WebhookResult.processed("DECLINED");
+	    } catch (Exception e) {
+	        log.error("Webhook processing failed: {}", e.getMessage(), e);
+	        return WebhookResult.error(e.getMessage());
+	    }
+	}
 
-			} else {
-				log.warn("Webhook ignored: unknown estado '{}'", estado);
-				return WebhookResult.ignored("Unknown estado: " + estado);
-			}
+	private PaymentTransactionEntity resolveTransaction(String parm1, String codOper) {
+	    if (parm1 != null && !parm1.isBlank()) {
+	        try {
+	            return txRepo.findById(UUID.fromString(parm1)).orElse(null);
+	        } catch (IllegalArgumentException ignored) { }
+	    }
+	    if (codOper != null && !codOper.isBlank()) {
+	        return txRepo.findByProviderRef(codOper).orElse(null);
+	    }
+	    return null;
+	}
 
-		} catch (Exception e) {
-			log.error("Webhook processing failed: {}", e.getMessage(), e);
-			return WebhookResult.error(e.getMessage());
-		}
+	/**
+	 * Extrae el monto pagado del payload del WEBHOOK de PF.
+	 *
+	 * Según doc oficial (developers.paguelofacil.com/guias/enlace-de-pago),
+	 * el webhook envía:
+	 *   - totalPay         → monto total de la transacción
+	 *   - requestPayAmount → monto solicitado en la petición
+	 * Comparamos contra totalPay (el efectivamente cobrado).
+	 */
+	private BigDecimal extractAmount(JsonNode json) {
+	    String[] candidates = {"totalPay", "requestPayAmount"};
+	    for (String field : candidates) {
+	        JsonNode n = json.get(field);
+	        if (n != null && !n.isNull()) {
+	            try {
+	                return new BigDecimal(n.asText().trim());
+	            } catch (NumberFormatException ignored) { }
+	        }
+	    }
+	    return null;
 	}
 
 	// ─── Result ───────────────────────────────────────────────────────

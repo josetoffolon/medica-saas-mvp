@@ -1,6 +1,9 @@
 package com.bisioneers.medica.billing.security;
 
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
+
+import jakarta.annotation.PostConstruct;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -34,6 +37,15 @@ public class JwtConfig {
 
     public JwtConfig(TokenBlocklistValidator tokenBlocklistValidator) {
         this.tokenBlocklistValidator = tokenBlocklistValidator;
+    }
+    
+    @PostConstruct
+    void validateSecret() {
+        if (jwtSecret == null || jwtSecret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalStateException(
+                "security.jwt.secret (env JWT_SECRET) es obligatorio y debe tener al menos " +
+                "32 bytes para HS256. Genera uno con: openssl rand -base64 48");
+        }
     }
 
     @Bean

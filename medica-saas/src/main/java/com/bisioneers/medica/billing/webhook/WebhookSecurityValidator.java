@@ -2,6 +2,8 @@ package com.bisioneers.medica.billing.webhook;
 
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.security.web.util.matcher.IpAddressMatcher;
+import java.util.Arrays;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,7 +15,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
 
@@ -49,8 +50,9 @@ import java.util.stream.Collectors;
 public class WebhookSecurityValidator {
 
 	private static final Logger log = LoggerFactory.getLogger(WebhookSecurityValidator.class);
+	private final List<IpAddressMatcher> allowedIpMatchers;
 
-	private final Set<String> allowedIps;
+
 	private final String webhookSecret;
 	private final String signatureHeader;
 	private final boolean ipValidationEnabled;
@@ -61,10 +63,10 @@ public class WebhookSecurityValidator {
 			@Value("${paguelofacil.webhook.secret:}") String webhookSecret,
 			@Value("${paguelofacil.webhook.signature-header:X-PF-Signature}") String signatureHeader
 			) {
-		this.allowedIps = parseIps(allowedIpsCsv);
+		this.allowedIpMatchers = parseIps(allowedIpsCsv);
 		this.webhookSecret = webhookSecret;
 		this.signatureHeader = signatureHeader;
-		this.ipValidationEnabled = !this.allowedIps.isEmpty();
+		this.ipValidationEnabled = !this.allowedIpMatchers.isEmpty();
 		this.signatureValidationEnabled = webhookSecret != null && !webhookSecret.isBlank();
 
 		if (!ipValidationEnabled) {
@@ -118,27 +120,30 @@ public class WebhookSecurityValidator {
 	// ─── Helpers ──────────────────────────────────────────────────────
 
 	/**
-  - Obtiene la IP real del cliente, considerando proxies (X-Forwarded-For).
+	 * IP real del cliente.
+	 *
+	 * Con server.forward-headers-strategy=framework (ya configurado),
+	 * getRemoteAddr() ya refleja la IP resuelta por Spring. NO parseamos
+	 * X-Forwarded-For manualmente porque es spoofeable si la app es alcanzable
+	 * de forma directa.
+	 *
+	 * La frontera de seguridad REAL es doble:
+	 *   (1) que solo el proxy confiable (Nginx) pueda alcanzar el puerto de la app, y
+	 *   (2) la firma HMAC del webhook (defensa en profundidad, abajo).
+	 * El whitelist de IP es un filtro grueso, no el control fuerte.
 	 */
 	private String getClientIp(HttpServletRequest request) {
-		String xForwardedFor = request.getHeader("X-Forwarded-For");
-		if (xForwardedFor != null && !xForwardedFor.isBlank()) {
-			// X-Forwarded-For puede tener múltiples IPs: “client, proxy1, proxy2”
-			// La primera es la IP real del cliente
-			return xForwardedFor.split(",")[0].trim();
-		}
 		return request.getRemoteAddr();
 	}
 
 	private boolean isIpAllowed(String clientIp) {
 		if (clientIp == null) return false;
-		// Match exacto o por prefijo (para soportar rangos tipo 200.46.148.*)
-		return allowedIps.stream().anyMatch(allowed -> {
-			if (allowed.endsWith("*")) {
-				String prefix = allowed.substring(0, allowed.length() - 1);
-				return clientIp.startsWith(prefix);
+		return allowedIpMatchers.stream().anyMatch(m -> {
+			try {
+				return m.matches(clientIp);
+			} catch (IllegalArgumentException e) {
+				return false; // IP malformada
 			}
-			return allowed.equals(clientIp);
 		});
 	}
 
@@ -169,12 +174,13 @@ public class WebhookSecurityValidator {
 		return result == 0;
 	}
 
-	private Set<String> parseIps(String csv) {
-		if (csv == null || csv.isBlank()) return Set.of();
-		return List.of(csv.split(",")).stream()
+	private List<IpAddressMatcher> parseIps(String csv) {
+		if (csv == null || csv.isBlank()) return List.of();
+		return Arrays.stream(csv.split(","))
 				.map(String::trim)
 				.filter(s -> !s.isEmpty())
-				.collect(Collectors.toSet());
+				.map(IpAddressMatcher::new) // soporta IP exacta y CIDR: 200.46.148.0/24
+				.toList();
 	}
 
 	// ─── Result ───────────────────────────────────────────────────────
