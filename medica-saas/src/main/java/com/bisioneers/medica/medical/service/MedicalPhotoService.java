@@ -4,6 +4,9 @@ import com.bisioneers.medica.medical.domain.MedicalPhotoEntity;
 import com.bisioneers.medica.medical.domain.MedicalPhotoRepository;
 import com.bisioneers.medica.medical.dto.MedicalDtos.*;
 import com.bisioneers.medica.medical.storage.MediaStorageService;
+import com.bisioneers.medica.patient.domain.PatientEntity;
+import com.bisioneers.medica.patient.domain.PatientRepository;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -30,11 +33,14 @@ public class MedicalPhotoService {
 
 	private final MedicalPhotoRepository photoRepository;
 	private final MediaStorageService storageService;
+	private final PatientRepository patientRepository;
 
 	public MedicalPhotoService(MedicalPhotoRepository photoRepository,
-			MediaStorageService storageService) {
+			MediaStorageService storageService,
+			PatientRepository patientRepository) {
 		this.photoRepository = photoRepository;
 		this.storageService = storageService;
+		this.patientRepository = patientRepository;
 	}
 
 	// ─── UPLOAD ───────────────────────────────────────────────────────
@@ -44,6 +50,19 @@ public class MedicalPhotoService {
 	 */
 	@Transactional
 	public MedicalPhotoEntity upload(UUID tenantId, PhotoMetadata metadata, MultipartFile file) {
+
+		// #Validar consentimiento ANTES de almacenar (no subir lo que se rechazará).
+		PatientEntity patient = patientRepository.findById(metadata.patientId())
+				.orElseThrow(() -> new IllegalArgumentException("Paciente no encontrado"));
+		if (!patient.getTenantId().equals(tenantId)) {
+			throw new IllegalArgumentException("Acceso denegado al paciente");
+		}
+		if (!patient.isPhotoConsent()) {
+			throw new IllegalStateException(
+					"El paciente no ha otorgado consentimiento para fotografías médicas. " +
+					"Registre el consentimiento antes de subir fotos.");
+		}
+
 		UUID photoId = UUID.randomUUID();
 
 		String storagePath = storageService.store(tenantId, metadata.patientId(), photoId, file);
@@ -196,7 +215,7 @@ public class MedicalPhotoService {
 	 * se regenera en cada request porque expira en 5 minutos.
 	 */
 	public PhotoResponse toResponse(MedicalPhotoEntity e) {
-		String url = storageService.generateAccessUrl(e.getStoragePath());
+		String url = buildAccessUrl(e);
 		return new PhotoResponse(
 				e.getId(),
 				e.getPatientId(),
@@ -215,5 +234,22 @@ public class MedicalPhotoService {
 				e.isPatientVisible(),
 				e.getPairedPhotoId()
 				);
+	}
+
+	/**
+	 * URL de acceso a la foto.
+	 *
+	 * - R2 (key empieza con "tenants/"): presigned URL directa (no pasa por backend).
+	 * - Local (formato viejo): apunta al endpoint REAL del controller que sirve
+	 *   el binario por photoId — /api/medical-photos/{id}/download.
+	 *   (generateAccessUrl de LocalMediaStorageService no sirve aquí porque no
+	 *    conoce el photoId; lo resolvemos donde sí lo tenemos.)
+	 */
+	private String buildAccessUrl(MedicalPhotoEntity e) {
+		String key = e.getStoragePath();
+		if (key != null && key.startsWith("tenants/")) {
+			return storageService.generateAccessUrl(key); // R2 presigned
+		}
+		return "/api/medical-photos/" + e.getId() + "/download"; // endpoint real existente
 	}
 }

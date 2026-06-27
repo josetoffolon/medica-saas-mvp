@@ -111,11 +111,11 @@ public class LocalMediaStorageService implements MediaStorageService {
 
 	@Override
 	public String generateAccessUrl(String storageKey) {
-		// Para archivos locales: ruta del endpoint del backend que los sirve.
-		// Tu MedicalPhotoController ya sirve via downloadPhoto(photoId).
-		// Aquí simplemente referenciamos el endpoint existente (necesitarás el photoId,
-		// no la storageKey, así que lo más limpio es manejarlo en el controller).
-		return "/api/medical/photos/local/" + storageKey;
+		// Para storage local NO se generan URLs directas: el acceso va por el
+		// endpoint autenticado del controller (/api/medical-photos/{id}/download),
+		// que indexa por photoId. Este método solo existe por contrato de la
+		// interfaz; el mapper construye la URL real donde tiene el photoId.
+		return storageKey;
 	}
 
 	public boolean exists(String storageKey) {
@@ -148,34 +148,34 @@ public class LocalMediaStorageService implements MediaStorageService {
 		}
 		return filename.replaceAll("[^a-zA-Z0-9._-]", "_");
 	}
-	
+
 	@Override
 	public String storeBytes(UUID tenantId, UUID patientId, UUID entityId,
-	                          byte[] bytes, String mimeType, String filename) {
-	    if (bytes == null || bytes.length == 0) {
-	        throw new IllegalArgumentException("El contenido está vacío");
-	    }
-	    if (bytes.length > MAX_FILE_SIZE) {
-	        throw new IllegalArgumentException("El contenido excede el tamaño máximo");
-	    }
+			byte[] bytes, String mimeType, String filename) {
+		if (bytes == null || bytes.length == 0) {
+			throw new IllegalArgumentException("El contenido está vacío");
+		}
+		if (bytes.length > MAX_FILE_SIZE) {
+			throw new IllegalArgumentException("El contenido excede el tamaño máximo");
+		}
 
-	    String safeFilename = sanitizeFilename(filename);
-	    String relativePath = String.format("%s/%s/documents/%s_%s",
-	            tenantId, patientId, entityId, safeFilename);
+		String safeFilename = sanitizeFilename(filename);
+		String relativePath = String.format("%s/%s/documents/%s_%s",
+				tenantId, patientId, entityId, safeFilename);
 
-	    Path targetPath = rootPath.resolve(relativePath).normalize();
-	    if (!targetPath.startsWith(rootPath)) {
-	        throw new IllegalArgumentException("Path traversal detected");
-	    }
+		Path targetPath = rootPath.resolve(relativePath).normalize();
+		if (!targetPath.startsWith(rootPath)) {
+			throw new IllegalArgumentException("Path traversal detected");
+		}
 
-	    try {
-	        Files.createDirectories(targetPath.getParent());
-	        Files.write(targetPath, bytes);
-	        log.debug("Stored {} bytes locally: {}", bytes.length, relativePath);
-	    } catch (IOException e) {
-	        throw new RuntimeException("Failed to store bytes: " + relativePath, e);
-	    }
+		try {
+			Files.createDirectories(targetPath.getParent());
+			Files.write(targetPath, bytes);
+			log.debug("Stored {} bytes locally: {}", bytes.length, relativePath);
+		} catch (IOException e) {
+			throw new RuntimeException("Failed to store bytes: " + relativePath, e);
+		}
 
-	    return relativePath;
+		return relativePath;
 	}
 }
