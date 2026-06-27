@@ -4,6 +4,8 @@ import com.bisioneers.medica.appointment.domain.AppointmentEntity;
 import com.bisioneers.medica.appointment.domain.AppointmentRepository;
 import com.bisioneers.medica.service.domain.ServiceEntity;
 import com.bisioneers.medica.service.domain.ServiceRepository;
+import com.bisioneers.medica.tenant.domain.TenantRepository;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -28,17 +30,27 @@ public class AppointmentService {
 	private final AppointmentRepository appointmentRepository;
 	private final ServiceRepository serviceRepository;
 	private final BusinessHoursService businessHoursService;
+	private final TenantRepository tenantRepository;
 
 	public AppointmentService(AppointmentRepository appointmentRepository,
 			ServiceRepository serviceRepository,
-			BusinessHoursService businessHoursService) {
+			BusinessHoursService businessHoursService,
+			TenantRepository tenantRepository) {
 		this.appointmentRepository = appointmentRepository;
 		this.serviceRepository = serviceRepository;
 		this.businessHoursService = businessHoursService;
+		this.tenantRepository = tenantRepository;
 	}
 
 	@Transactional
 	public AppointmentEntity create(AppointmentEntity appointment) {
+
+		// Lock pesimista sobre el tenant: serializa la creación de citas del mismo
+		// tenant para cerrar la ventana check-then-act del conflicto de horario.
+		// Dos peticiones concurrentes del mismo tenant se procesan en orden;
+		// tenants distintos no se bloquean entre sí.
+		tenantRepository.findByIdForUpdate(appointment.getTenantId())
+		.orElseThrow(() -> new IllegalArgumentException("Tenant no encontrado"));
 
 		// Si hay serviceId, cargar duración del servicio
 		if (appointment.getServiceId() != null) {
@@ -91,6 +103,13 @@ public class AppointmentService {
 		if (!existing.getTenantId().equals(updates.getTenantId())) {
 			throw new IllegalArgumentException("No se puede cambiar el tenant de la cita");
 		}
+
+		// Lock pesimista sobre el tenant: serializa la creación de citas del mismo
+		// tenant para cerrar la ventana check-then-act del conflicto de horario.
+		// Dos peticiones concurrentes del mismo tenant se procesan en orden;
+		// tenants distintos no se bloquean entre sí.
+		tenantRepository.findByIdForUpdate(updates.getTenantId())
+		.orElseThrow(() -> new IllegalArgumentException("Tenant no encontrado"));
 
 		// Si se cambia la fecha/hora o duración, re-validar
 		if (!existing.getScheduledAt().equals(updates.getScheduledAt()) ||

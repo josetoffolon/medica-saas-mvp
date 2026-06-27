@@ -21,9 +21,13 @@ import java.util.UUID;
 @Entity
 @Table(name = "patient",
        indexes = {
-           @Index(name = "idx_patient_tenant_email", columnList = "tenant_id,email"),
-           @Index(name = "idx_patient_tenant_document", columnList = "tenant_id,document_number"),
            @Index(name = "idx_patient_tenant_active", columnList = "tenant_id,active")
+       },
+       uniqueConstraints = {
+           @UniqueConstraint(name = "uk_patient_tenant_email",
+                   columnNames = {"tenant_id", "email"}),
+           @UniqueConstraint(name = "uk_patient_tenant_document",
+                   columnNames = {"tenant_id", "document_number"})
        })
 public class PatientEntity extends TenantScopedEntity {
 
