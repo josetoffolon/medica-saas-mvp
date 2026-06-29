@@ -15,10 +15,15 @@ import java.util.UUID;
  * (src/app/features/billing/services/billing.service.ts).
  *
  * Algunos campos que el frontend espera no existen como columnas en la
- * entidad — se derivan o extraen del payloadJson:
+ * entidad — se derivan:
  *   - description: derivado del status (ej: "Suscripción mensual")
  *   - paidAt: si status==PAID, se usa updatedAt; sino null
- *   - failedReason: si status==FAILED, se intenta extraer "Razon" del payloadJson
+ *   - failedReason: si la transacción fue rechazada (DECLINED/FAILED), se
+ *     extrae "Razon" del ÚLTIMO payment_event de la transacción.
+ *
+ * #16: la razón ya NO se lee del payloadJson concatenado (eliminado).
+ * El controller resuelve el último payment_event y lo pasa como lastEventJson,
+ * porque este método es estático y no tiene acceso al repositorio.
  */
 public record TransactionDto(
         UUID id,
@@ -35,11 +40,18 @@ public record TransactionDto(
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    public static TransactionDto from(PaymentTransactionEntity entity) {
+    /**
+     * @param entity        la transacción
+     * @param lastEventJson rawJson del último payment_event (puede ser null)
+     */
+    public static TransactionDto from(PaymentTransactionEntity entity, String lastEventJson) {
         String status = entity.getStatus();
         Instant paidAt = "PAID".equals(status) ? entity.getUpdatedAt() : null;
-        String failedReason = "FAILED".equals(status)
-                ? extractFailedReason(entity.getPayloadJson())
+
+        // Los rechazos del webhook se marcan como DECLINED; FAILED se mantiene
+        // por compatibilidad con estados antiguos.
+        String failedReason = ("DECLINED".equals(status) || "FAILED".equals(status))
+                ? extractFailedReason(lastEventJson)
                 : null;
 
         return new TransactionDto(
@@ -57,14 +69,14 @@ public record TransactionDto(
     }
 
     /**
-     * Extrae el campo "Razon" o "razon" del payloadJson de Paguelo Fácil
-     * cuando una transacción fue rechazada. Si el JSON no es parseable
-     * o no contiene la razón, retorna null.
+     * Extrae el campo "Razon"/"razon" del payload de Paguelo Fácil cuando una
+     * transacción fue rechazada. Si el JSON es null, no parseable o no contiene
+     * la razón, retorna null.
      */
-    private static String extractFailedReason(String payloadJson) {
-        if (payloadJson == null || payloadJson.isBlank()) return null;
+    private static String extractFailedReason(String eventJson) {
+        if (eventJson == null || eventJson.isBlank()) return null;
         try {
-            JsonNode root = MAPPER.readTree(payloadJson);
+            JsonNode root = MAPPER.readTree(eventJson);
             JsonNode razon = root.has("Razon") ? root.get("Razon") : root.get("razon");
             return razon != null && !razon.isNull() ? razon.asText() : null;
         } catch (Exception e) {

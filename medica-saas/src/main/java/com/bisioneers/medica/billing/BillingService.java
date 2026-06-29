@@ -1,5 +1,7 @@
 package com.bisioneers.medica.billing;
 
+import com.bisioneers.medica.billing.domain.PaymentEventEntity;
+import com.bisioneers.medica.billing.domain.PaymentEventRepository;
 import com.bisioneers.medica.billing.domain.PaymentTransactionEntity;
 import com.bisioneers.medica.billing.domain.PaymentTransactionRepository;
 import com.bisioneers.medica.billing.pf.PagueloFacilClient;
@@ -27,12 +29,14 @@ public class BillingService {
 	private final String returnUrl;
 	private final boolean requireAmountMatch;
 	private static final Logger log = LoggerFactory.getLogger(BillingService.class);
+	private final PaymentEventRepository eventRepo;
 
 	private final PagueloFacilClient pfClient;
 	private final boolean verifyWithProvider;
 
 	public BillingService(
 			PaymentTransactionRepository txRepo,
+			PaymentEventRepository eventRepo,
 			PagueloFacilLinkClient linkClient,
 			PagueloFacilClient pfClient,
 			@Value("${billing.subscription-amount}") BigDecimal subscriptionAmount,
@@ -43,6 +47,7 @@ public class BillingService {
 			SubscriptionService subscriptionService
 			) {
 		this.txRepo = txRepo;
+		this.eventRepo = eventRepo;
 		this.linkClient = linkClient;
 		this.pfClient = pfClient;
 		this.subscriptionAmount = subscriptionAmount;
@@ -84,20 +89,15 @@ public class BillingService {
 		try {
 			var result = linkClient.createPaymentLink(cmd);
 
-			// Guardar respuesta PF como auditoría
-			tx.setPayloadJson(appendPayload(tx.getPayloadJson(), result.rawJson()));
-
-			// Si algún día guardas "code", NO lo metas en providerRef (providerRef se usa para "Oper" del webhook)
-			// tx.setPayloadJson(appendPayload(tx.getPayloadJson(), "{\"pfLinkCode\":\"" + safe(result.code()) + "\"}"));
+			recordEvent(tx, "CHECKOUT", null, result.rawJson());
 
 			txRepo.save(tx);
 
 			return new CheckoutResponse(tx.getId(), result.checkoutUrl(), tx.getStatus());
 		} catch (Exception ex) {
 			tx.setStatus("ERROR");
-			tx.setPayloadJson(appendPayload(tx.getPayloadJson(),
-					"{\"time\":\"" + Instant.now() + "\",\"error\":\"PF_LINK_CREATE_FAILED\",\"message\":\"" + safe(ex.getMessage()) + "\"}"
-					));
+			recordEvent(tx, "ERROR", "PF_LINK_CREATE_FAILED",
+					"{\"time\":\"" + Instant.now() + "\",\"message\":\"" + safe(ex.getMessage()) + "\"}");
 			txRepo.save(tx);
 			throw ex;
 		}
@@ -120,7 +120,7 @@ public class BillingService {
 		// Idempotencia: ya pagada
 		if ("PAID".equalsIgnoreCase(tx.getStatus())) {
 			if (rawBody != null && !rawBody.isBlank()) {
-				tx.setPayloadJson(appendPayload(tx.getPayloadJson(), rawBody));
+				recordEvent(tx, "WEBHOOK", "PAID_DUP", rawBody);
 				if (providerRef != null && !providerRef.isBlank()) tx.setProviderRef(providerRef);
 				txRepo.save(tx);
 			}
@@ -133,9 +133,8 @@ public class BillingService {
 				log.error("Amount mismatch en tx {}: esperado={}, reportado={}. NO se activa.",
 						txId, tx.getAmount(), paidAmount);
 				tx.setStatus("AMOUNT_MISMATCH");
-				tx.setPayloadJson(appendPayload(tx.getPayloadJson(),
-						"{\"error\":\"AMOUNT_MISMATCH\",\"expected\":\"" + tx.getAmount()
-						+ "\",\"reported\":\"" + paidAmount + "\"}"));
+				recordEvent(tx, "WEBHOOK", "AMOUNT_MISMATCH",
+						"{\"expected\":\"" + tx.getAmount() + "\",\"reported\":\"" + paidAmount + "\"}");
 				if (providerRef != null && !providerRef.isBlank()) tx.setProviderRef(providerRef);
 				txRepo.save(tx);
 				return; // ← no activamos suscripción
@@ -144,8 +143,7 @@ public class BillingService {
 			// Fail-closed: PF no reportó monto y exigimos verificarlo
 			log.error("PF no reportó monto para tx {} y require-amount-match=true. NO se activa.", txId);
 			tx.setStatus("AMOUNT_UNVERIFIED");
-			tx.setPayloadJson(appendPayload(tx.getPayloadJson(),
-					"{\"error\":\"AMOUNT_UNVERIFIED\"}"));
+			recordEvent(tx, "WEBHOOK", "AMOUNT_UNVERIFIED", "{\"error\":\"AMOUNT_UNVERIFIED\"}");
 			txRepo.save(tx);
 			return;
 		} else {
@@ -158,8 +156,7 @@ public class BillingService {
 			if (providerRef == null || providerRef.isBlank()) {
 				log.error("No hay codOper para verificar tx {} con PF. NO se activa.", txId);
 				tx.setStatus("UNVERIFIED");
-				tx.setPayloadJson(appendPayload(tx.getPayloadJson(),
-						"{\"error\":\"NO_OPER_TO_VERIFY\"}"));
+				recordEvent(tx, "WEBHOOK", "NO_OPER_TO_VERIFY", "{\"error\":\"NO_OPER_TO_VERIFY\"}");
 				txRepo.save(tx);
 				return;
 			}
@@ -167,8 +164,8 @@ public class BillingService {
 				log.error("PF NO confirma pago de operación {} (tx {}). NO se activa.",
 						providerRef, txId);
 				tx.setStatus("VERIFICATION_FAILED");
-				tx.setPayloadJson(appendPayload(tx.getPayloadJson(),
-						"{\"error\":\"PROVIDER_VERIFICATION_FAILED\",\"oper\":\"" + safe(providerRef) + "\"}"));
+				recordEvent(tx, "WEBHOOK", "VERIFICATION_FAILED",
+						"{\"oper\":\"" + safe(providerRef) + "\"}");
 				txRepo.save(tx);
 				return; // ← webhook falsificado o pago no real: bloqueado
 			}
@@ -177,7 +174,7 @@ public class BillingService {
 
 		tx.setStatus("PAID");
 		if (providerRef != null && !providerRef.isBlank()) tx.setProviderRef(providerRef);
-		tx.setPayloadJson(appendPayload(tx.getPayloadJson(), rawBody));
+		recordEvent(tx, "WEBHOOK", "PAID", rawBody);
 		txRepo.save(tx);
 
 		subscriptionService.activateFromPaidTransaction(tx.getTenantId(), tx.getId());
@@ -196,13 +193,13 @@ public class BillingService {
 
 		if ("PAID".equalsIgnoreCase(tx.getStatus())) {
 			// no degradamos a DECLINED
-			tx.setPayloadJson(appendPayload(tx.getPayloadJson(), rawBody));
+			recordEvent(tx, "WEBHOOK", "DECLINED_ON_PAID", rawBody);
 			txRepo.save(tx);
 			return;
 		}
 
 		if ("DECLINED".equalsIgnoreCase(tx.getStatus())) {
-			tx.setPayloadJson(appendPayload(tx.getPayloadJson(), rawBody));
+			recordEvent(tx, "WEBHOOK", "DECLINED_DUP", rawBody);
 			if (providerRef != null && !providerRef.isBlank()) tx.setProviderRef(providerRef);
 			txRepo.save(tx);
 			return;
@@ -210,7 +207,7 @@ public class BillingService {
 
 		tx.setStatus("DECLINED");
 		if (providerRef != null && !providerRef.isBlank()) tx.setProviderRef(providerRef);
-		tx.setPayloadJson(appendPayload(tx.getPayloadJson(), rawBody));
+		recordEvent(tx, "WEBHOOK", "DECLINED", rawBody);
 
 		txRepo.save(tx);
 	}
@@ -219,14 +216,26 @@ public class BillingService {
 
 	// ---------------- helpers ----------------
 
-	private String appendPayload(String existing, String next) {
-		if (next == null || next.isBlank()) return existing;
-		if (existing == null || existing.isBlank()) return next;
-		return existing + "\n---\n" + next;
-	}
-
 	private String safe(String s) {
 		if (s == null) return "";
 		return s.replace("\"", "'").replace("\n", " ").replace("\r", " ");
+	}
+
+	/**
+	 * Registra un evento de pago como fila en payment_event.
+	 * Reemplaza el viejo appendPayload (#16): historial completo, sin
+	 * crecer el campo de la transacción.
+	 */
+	private void recordEvent(PaymentTransactionEntity tx, String source,
+			String outcome, String rawJson) {
+		if (rawJson == null || rawJson.isBlank()) return;
+		try {
+			eventRepo.save(new PaymentEventEntity(
+					tx.getTenantId(), tx.getId(), source, outcome, rawJson));
+		} catch (Exception e) {
+			// El registro de auditoría nunca debe romper el flujo de pago
+			log.error("No se pudo registrar payment_event (tx={}, source={}): {}",
+					tx.getId(), source, e.getMessage());
+		}
 	}
 }

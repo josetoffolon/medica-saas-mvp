@@ -1,5 +1,7 @@
 package com.bisioneers.medica.billing.controller;
 
+import com.bisioneers.medica.billing.domain.PaymentEventEntity;
+import com.bisioneers.medica.billing.domain.PaymentEventRepository;
 import com.bisioneers.medica.billing.domain.PaymentTransactionEntity;
 import com.bisioneers.medica.billing.domain.PaymentTransactionRepository;
 import com.bisioneers.medica.billing.dto.TransactionDto;
@@ -27,6 +29,10 @@ import java.util.UUID;
  * Visible para todos los usuarios autenticados del tenant.
  * El historial de pagos es información necesaria para verificar
  * el estado de la suscripción de la clínica.
+ *
+ * #16: el failedReason/razón se deriva del ÚLTIMO payment_event de la
+ * transacción (antes salía del payloadJson concatenado). Se resuelve aquí
+ * porque TransactionDto.from es estático y no tiene acceso al repo.
  */
 @RestController
 @RequestMapping("/api/billing/transactions")
@@ -36,9 +42,12 @@ public class TransactionController {
     private static final int MAX_PAGE_SIZE = 100;
 
     private final PaymentTransactionRepository transactionRepository;
+    private final PaymentEventRepository eventRepository;
 
-    public TransactionController(PaymentTransactionRepository transactionRepository) {
+    public TransactionController(PaymentTransactionRepository transactionRepository,
+                                 PaymentEventRepository eventRepository) {
         this.transactionRepository = transactionRepository;
+        this.eventRepository = eventRepository;
     }
 
     /**
@@ -59,7 +68,7 @@ public class TransactionController {
                 transactionRepository.findByTenantIdOrderByCreatedAtDesc(
                         principal.getTenantId(), pageable);
 
-        Page<TransactionDto> dtos = entities.map(TransactionDto::from);
+        Page<TransactionDto> dtos = entities.map(this::toDto);
         return ResponseEntity.ok(dtos);
     }
 
@@ -73,10 +82,24 @@ public class TransactionController {
             @PathVariable UUID id
     ) {
         return transactionRepository.findByIdAndTenantId(id, principal.getTenantId())
-                .map(entity -> ResponseEntity.ok((Object) TransactionDto.from(entity)))
+                .map(entity -> ResponseEntity.ok((Object) toDto(entity)))
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND).body(
                         Map.of("error", "Transacción no encontrada")
                 ));
     }
-}
 
+    // ─── Mapper ───────────────────────────────────────────────────────
+
+    /**
+     * Construye el DTO resolviendo el rawJson del último evento de pago.
+     *
+     * NOTA: esto introduce un query por transacción (N+1 en el listado).
+     * Tolerable al volumen paginado actual (<=100 por página); si crece,
+     * sustituir por un query batch del último evento por conjunto de tx.
+     */
+    private TransactionDto toDto(PaymentTransactionEntity tx) {
+        PaymentEventEntity last =
+                eventRepository.findFirstByTransactionIdOrderByCreatedAtDesc(tx.getId());
+        return TransactionDto.from(tx, last != null ? last.getRawJson() : null);
+    }
+}
