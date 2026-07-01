@@ -115,9 +115,9 @@ public interface AppointmentRepository extends JpaRepository<AppointmentEntity, 
      */
     @Query("SELECT a FROM AppointmentEntity a WHERE a.status = 'SCHEDULED' " +
            "AND a.reminder24hSent = false " +
-           "AND a.scheduledAt > :now AND a.scheduledAt < :windowEnd")
+           "AND a.scheduledAt > :windowStart AND a.scheduledAt < :windowEnd")
     List<AppointmentEntity> findPendingReminder24h(
-        @Param("now") LocalDateTime now,
+        @Param("windowStart") LocalDateTime windowStart,
         @Param("windowEnd") LocalDateTime windowEnd
     );
 
@@ -126,9 +126,9 @@ public interface AppointmentRepository extends JpaRepository<AppointmentEntity, 
      */
     @Query("SELECT a FROM AppointmentEntity a WHERE a.status = 'SCHEDULED' " +
            "AND a.reminder2hSent = false " +
-           "AND a.scheduledAt > :now AND a.scheduledAt < :windowEnd")
+           "AND a.scheduledAt > :windowStart AND a.scheduledAt < :windowEnd")
     List<AppointmentEntity> findPendingReminder2h(
-        @Param("now") LocalDateTime now,
+        @Param("windowStart") LocalDateTime windowStart,
         @Param("windowEnd") LocalDateTime windowEnd
     );
     
