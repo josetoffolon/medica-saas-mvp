@@ -86,12 +86,7 @@ public class AppointmentReminderJob {
 		LocalDateTime windowEnd = now.plusHours(25);
 
 		List<AppointmentEntity> appointments =
-				appointmentRepository.findPendingReminder24h(now, windowEnd);
-
-		// Filtrar por ventana (la query ya filtra > now, pero necesitamos > 23h)
-		appointments = appointments.stream()
-				.filter(a -> a.getScheduledAt().isAfter(windowStart))
-				.toList();
+				appointmentRepository.findPendingReminder24h(windowStart, windowEnd);
 
 		if (!appointments.isEmpty()) {
 			log.info("Processing {} reminder(s) of 24h", appointments.size());

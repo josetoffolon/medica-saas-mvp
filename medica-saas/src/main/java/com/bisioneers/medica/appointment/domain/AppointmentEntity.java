@@ -19,7 +19,9 @@ import java.util.UUID;
            @Index(name = "idx_appt_tenant_datetime", columnList = "tenant_id,scheduled_at"),
            @Index(name = "idx_appt_tenant_patient", columnList = "tenant_id,patient_id"),
            @Index(name = "idx_appt_tenant_status", columnList = "tenant_id,status"),
-           @Index(name = "idx_appt_tenant_date_range", columnList = "tenant_id,scheduled_at,status")
+           @Index(name = "idx_appt_tenant_date_range", columnList = "tenant_id,scheduled_at,status"),
+           @Index(name = "idx_appt_reminder_24h", columnList = "status,reminder_24h_sent,scheduled_at"),
+           @Index(name = "idx_appt_reminder_2h", columnList = "status,reminder_2h_sent,scheduled_at")
        })
 public class AppointmentEntity extends TenantScopedEntity {
 
