@@ -52,11 +52,8 @@ public class MedicalPhotoService {
 	public MedicalPhotoEntity upload(UUID tenantId, PhotoMetadata metadata, MultipartFile file) {
 
 		// #Validar consentimiento ANTES de almacenar (no subir lo que se rechazará).
-		PatientEntity patient = patientRepository.findById(metadata.patientId())
+		PatientEntity patient = patientRepository.findByIdAndTenantId(metadata.patientId(), tenantId)
 				.orElseThrow(() -> new IllegalArgumentException("Paciente no encontrado"));
-		if (!patient.getTenantId().equals(tenantId)) {
-			throw new IllegalArgumentException("Acceso denegado al paciente");
-		}
 		if (!patient.isPhotoConsent()) {
 			throw new IllegalStateException(
 					"El paciente no ha otorgado consentimiento para fotografías médicas. " +
@@ -104,14 +101,8 @@ public class MedicalPhotoService {
 
 	@Transactional(readOnly = true)
 	public MedicalPhotoEntity getById(UUID tenantId, UUID photoId) {
-		MedicalPhotoEntity photo = photoRepository.findById(photoId)
-				.orElseThrow(() -> new IllegalArgumentException("Foto no encontrada"));
-
-		if (!photo.getTenantId().equals(tenantId)) {
-			throw new IllegalArgumentException("Acceso denegado");
-		}
-
-		return photo;
+	    return photoRepository.findByIdAndTenantId(photoId, tenantId)
+	            .orElseThrow(() -> new IllegalArgumentException("Foto no encontrada"));
 	}
 
 	/**
@@ -193,7 +184,7 @@ public class MedicalPhotoService {
 		MedicalPhotoEntity photo = getById(tenantId, photoId);
 
 		if (photo.getPairedPhotoId() != null) {
-			photoRepository.findById(photo.getPairedPhotoId()).ifPresent(paired -> {
+			photoRepository.findByIdAndTenantId(photo.getPairedPhotoId(), tenantId).ifPresent(paired -> {
 				if (paired.getPairedPhotoId() != null && paired.getPairedPhotoId().equals(photoId)) {
 					paired.setPairedPhotoId(null);
 					photoRepository.save(paired);

@@ -37,6 +37,14 @@ import jakarta.persistence.Transient;
     parameters = @ParamDef(name = "tenantId", type = java.util.UUID.class)
 )
 @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
+/**
+ * REGLA DE PROYECTO: el @Filter de tenant NO se aplica a findById()
+ * (carga por PK). Para cargar una entidad tenant-scoped por id, usa SIEMPRE
+ * repository.findByIdAndTenantId(id, tenantId) — nunca findById(id) + chequeo
+ * manual, que es fácil de olvidar y filtra información por el mensaje de error.
+ * Operaciones de sistema sin tenant (jobs, webhooks, lookup por token público)
+ * son la única excepción y deben documentar por qué.
+ */
 public abstract class TenantScopedEntity extends AuditedEntity {
 
     @JdbcTypeCode(SqlTypes.BINARY)

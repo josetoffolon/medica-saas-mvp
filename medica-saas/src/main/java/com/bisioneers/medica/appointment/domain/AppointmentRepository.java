@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface AppointmentRepository extends JpaRepository<AppointmentEntity, UUID> {
@@ -130,4 +131,9 @@ public interface AppointmentRepository extends JpaRepository<AppointmentEntity, 
         @Param("now") LocalDateTime now,
         @Param("windowEnd") LocalDateTime windowEnd
     );
+    
+    /**
+     * Obtener Appointment filtrados con ID y TenantId
+     */
+    Optional<AppointmentEntity> findByIdAndTenantId(UUID id, UUID tenantId);
 }

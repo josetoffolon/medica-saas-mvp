@@ -50,14 +50,8 @@ public class ServiceService {
 
     @Transactional(readOnly = true)
     public ServiceEntity getById(UUID tenantId, UUID serviceId) {
-        ServiceEntity service = serviceRepository.findById(serviceId)
+        return serviceRepository.findByIdAndTenantId(serviceId, tenantId)
                 .orElseThrow(() -> new IllegalArgumentException("Servicio no encontrado"));
-
-        if (!service.getTenantId().equals(tenantId)) {
-            throw new IllegalArgumentException("Acceso denegado");
-        }
-
-        return service;
     }
 
     /**

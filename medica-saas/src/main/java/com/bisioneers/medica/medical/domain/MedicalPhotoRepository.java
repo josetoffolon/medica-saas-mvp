@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface MedicalPhotoRepository extends JpaRepository<MedicalPhotoEntity, UUID> {
@@ -38,4 +39,9 @@ public interface MedicalPhotoRepository extends JpaRepository<MedicalPhotoEntity
     List<MedicalPhotoEntity> findPairedPhotos(
         @Param("tenantId") UUID tenantId,
         @Param("patientId") UUID patientId);
+    
+    /**
+     * Obtener MedicalPhoto filtrados con ID y TenantId
+     */
+    Optional<MedicalPhotoEntity> findByIdAndTenantId(UUID id, UUID tenantId);
 }
