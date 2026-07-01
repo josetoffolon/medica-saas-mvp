@@ -54,12 +54,8 @@ public class AppointmentService {
 
 		// Si hay serviceId, cargar duración del servicio
 		if (appointment.getServiceId() != null) {
-			ServiceEntity service = serviceRepository.findById(appointment.getServiceId())
+			ServiceEntity service = serviceRepository.findByIdAndTenantId(appointment.getServiceId(), appointment.getTenantId())
 					.orElseThrow(() -> new IllegalArgumentException("Servicio no encontrado"));
-
-			if (!service.getTenantId().equals(appointment.getTenantId())) {
-				throw new IllegalArgumentException("Servicio no pertenece al tenant");
-			}
 
 			if (appointment.getDurationMinutes() == 0) {
 				appointment.setDurationMinutes(service.getDurationMinutes());
@@ -97,12 +93,8 @@ public class AppointmentService {
 
 	@Transactional
 	public AppointmentEntity update(UUID id, AppointmentEntity updates) {
-		AppointmentEntity existing = appointmentRepository.findById(id)
+		AppointmentEntity existing = appointmentRepository.findByIdAndTenantId(id, updates.getTenantId())
 				.orElseThrow(() -> new IllegalArgumentException("Cita no encontrada"));
-
-		if (!existing.getTenantId().equals(updates.getTenantId())) {
-			throw new IllegalArgumentException("No se puede cambiar el tenant de la cita");
-		}
 
 		// Lock pesimista sobre el tenant: serializa la creación de citas del mismo
 		// tenant para cerrar la ventana check-then-act del conflicto de horario.
@@ -153,12 +145,8 @@ public class AppointmentService {
 
 	@Transactional(readOnly = true)
 	public AppointmentEntity getById(UUID tenantId, UUID appointmentId) {
-		AppointmentEntity appointment = appointmentRepository.findById(appointmentId)
+		AppointmentEntity appointment = appointmentRepository.findByIdAndTenantId(appointmentId, tenantId)
 				.orElseThrow(() -> new IllegalArgumentException("Cita no encontrada"));
-
-		if (!appointment.getTenantId().equals(tenantId)) {
-			throw new IllegalArgumentException("Acceso denegado");
-		}
 
 		return appointment;
 	}

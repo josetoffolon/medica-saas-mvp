@@ -51,5 +51,10 @@ public interface PatientRepository extends JpaRepository<PatientEntity, UUID> {
 	 * Contar pacientes activos por tenant
 	 */
 	long countByTenantIdAndActiveTrue(UUID tenantId);
+	
+	/**
+     * Obtener pacientes filtrados con ID y TenantId
+     */
+	Optional<PatientEntity> findByIdAndTenantId(UUID id, UUID tenantId);
 
 }

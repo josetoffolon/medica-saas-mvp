@@ -57,12 +57,8 @@ public class PatientService {
 
 	@Transactional
 	public PatientEntity update(UUID id, PatientEntity updates) {
-		PatientEntity existing = patientRepository.findById(id)
+		PatientEntity existing = patientRepository.findByIdAndTenantId(id, updates.getTenantId())
 				.orElseThrow(() -> new IllegalArgumentException("Paciente no encontrado"));
-
-		if (!existing.getTenantId().equals(updates.getTenantId())) {
-			throw new IllegalArgumentException("No se puede cambiar el tenant del paciente");
-		}
 
 		// Validar unicidad de email si cambió
 		if (updates.getEmail() != null && !updates.getEmail().isBlank()
@@ -130,14 +126,8 @@ public class PatientService {
 
 	@Transactional(readOnly = true)
 	public PatientEntity getById(UUID tenantId, UUID patientId) {
-		PatientEntity patient = patientRepository.findById(patientId)
+		return patientRepository.findByIdAndTenantId(patientId, tenantId)
 				.orElseThrow(() -> new IllegalArgumentException("Paciente no encontrado"));
-
-		if (!patient.getTenantId().equals(tenantId)) {
-			throw new IllegalArgumentException("Acceso denegado");
-		}
-
-		return patient;
 	}
 
 	@Transactional(readOnly = true)
@@ -159,12 +149,8 @@ public class PatientService {
 
 	@Transactional
 	public void reactivate(UUID tenantId, UUID patientId) {
-		PatientEntity patient = patientRepository.findById(patientId)
+		PatientEntity patient = patientRepository.findByIdAndTenantId(patientId, tenantId)
 				.orElseThrow(() -> new IllegalArgumentException("Paciente no encontrado"));
-
-		if (!patient.getTenantId().equals(tenantId)) {
-			throw new IllegalArgumentException("Acceso denegado");
-		}
 
 		patient.setActive(true);
 		patientRepository.save(patient);
