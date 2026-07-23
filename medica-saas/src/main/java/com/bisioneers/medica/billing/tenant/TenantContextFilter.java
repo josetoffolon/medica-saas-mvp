@@ -29,8 +29,7 @@ public class TenantContextFilter extends OncePerRequestFilter {
             || path.startsWith("/swagger-ui")
             || path.startsWith("/v3/api-docs")
             || path.startsWith("/actuator")
-            || path.startsWith("/api/billing/webhook")
-            || path.startsWith("/billing/return");
+            || path.startsWith("/api/billing/webhook");
     }
 
     @Override

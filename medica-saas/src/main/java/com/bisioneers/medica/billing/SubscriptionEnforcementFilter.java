@@ -1,7 +1,6 @@
 package com.bisioneers.medica.billing;
 
 import java.io.IOException;
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -19,21 +18,30 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 /**
-
-- Filtro que verifica la suscripción del tenant.
-- 
-- CAMBIOS vs versión anterior:
-- - Soporta grace period: si el tenant está en gracia, deja pasar
-- pero agrega headers de warning para que el frontend muestre un banner.
-- - Headers de grace period:
-- X-Subscription-Status: GRACE_PERIOD
-- X-Grace-Period-End: 2026-03-15T00:00:00Z
-- 
-- Comportamiento:
-- ACTIVE        → deja pasar sin headers extra
-- GRACE_PERIOD  → deja pasar + headers de warning
-- PAST_DUE      → bloquea con HTTP 402
-- INACTIVE/NONE → bloquea con HTTP 402
+ * Filtro que verifica la suscripción del tenant.
+ *
+ * Soporta grace period: si el tenant está en gracia, deja pasar
+ * pero agrega headers de warning para que el frontend muestre un banner.
+ *   X-Subscription-Status: GRACE_PERIOD
+ *   X-Grace-Period-End: 2026-03-15T00:00:00Z
+ *
+ * Comportamiento:
+ *   ACTIVE        → deja pasar sin headers extra
+ *   GRACE_PERIOD  → deja pasar + headers de warning
+ *   PAST_DUE      → bloquea con HTTP 402
+ *   INACTIVE/NONE → bloquea con HTTP 402
+ *
+ * WHITELIST — racional de cada entrada:
+ *   /api/auth               → login/refresh/MFA no dependen de la suscripción
+ *   /api/public             → firma remota de pacientes (autorizada por token)
+ *   /api/billing/webhook    → PF debe poder notificar pagos siempre
+ *   /api/billing/checkout   → un tenant moroso DEBE poder iniciar el pago
+ *   /api/subscription/me    → un tenant moroso DEBE poder consultar su estado:
+ *                             lo usan el subscriptionGuard, billing-overview y
+ *                             el polling de BillingReturnComponent en Angular.
+ *                             Sin esto, el polling post-pago recibía 402 y el
+ *                             usuario quedaba en "Procesando..." indefinidamente.
+ *   /actuator, /swagger-ui, /v3/api-docs → infraestructura
  */
 @Component
 public class SubscriptionEnforcementFilter extends OncePerRequestFilter {
@@ -45,10 +53,9 @@ public class SubscriptionEnforcementFilter extends OncePerRequestFilter {
 	private static final List<String> WHITELIST_PREFIXES = List.of(
 			"/api/auth",
 			"/api/public",
-			"/billing/return",
 			"/api/billing/webhook",
 			"/api/billing/checkout",
-			"/api/billing/status",
+			"/api/subscription/me",
 			"/actuator",
 			"/swagger-ui",
 			"/v3/api-docs"
@@ -104,31 +111,31 @@ public class SubscriptionEnforcementFilter extends OncePerRequestFilter {
 		SubscriptionStatusSnapshot subscription = subscriptionService.getEnforcementSnapshot(tenantId);
 
 		if (!subscription.active()) {
-		    log.info("Subscription blocked: tenant={}, path={}", tenantId, request.getRequestURI());
-		    response.setStatus(402);
-		    response.setContentType("application/json");
-		    response.setCharacterEncoding("UTF-8");
-		    response.getWriter().write("""
-		            {
-		              "error":"subscription_inactive",
-		              "message":"Tu suscripción ha expirado. Renueva para continuar.",
-		              "action":"renew",
-		              "checkoutUrl":"/api/billing/checkout"
-		            }
-		            """);
-		    return;
+			log.info("Subscription blocked: tenant={}, path={}", tenantId, request.getRequestURI());
+			response.setStatus(402);
+			response.setContentType("application/json");
+			response.setCharacterEncoding("UTF-8");
+			response.getWriter().write("""
+					{
+					  "error":"subscription_inactive",
+					  "message":"Tu suscripción ha expirado. Renueva para continuar.",
+					  "action":"renew",
+					  "checkoutUrl":"/api/billing/checkout"
+					}
+					""");
+			return;
 		}
 
 		// Activa — agregar warning si está en grace period
 		if (subscription.inGracePeriod()) {
-		    response.setHeader("X-Subscription-Status", "GRACE_PERIOD");
-		    if (subscription.graceEnd() != null) {
-		        response.setHeader("X-Grace-Period-End", subscription.graceEnd().toString());
-		    }
-		    log.debug("Grace period active: tenant={}, graceEnd={}", tenantId, subscription.graceEnd());
+			response.setHeader("X-Subscription-Status", "GRACE_PERIOD");
+			if (subscription.graceEnd() != null) {
+				response.setHeader("X-Grace-Period-End", subscription.graceEnd().toString());
+			}
+			log.debug("Grace period active: tenant={}, graceEnd={}", tenantId, subscription.graceEnd());
 		}
 
-		filterChain.doFilter(request, response);;
+		filterChain.doFilter(request, response);
 	}
 
 	private UUID extractTenantId(Object principal) {

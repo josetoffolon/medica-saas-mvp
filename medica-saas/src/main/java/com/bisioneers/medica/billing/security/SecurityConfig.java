@@ -65,9 +65,10 @@ public class SecurityConfig {
                     "/api/auth/mfa/verify",
                     "/api/public/**"
                 ).permitAll()
-                // Billing webhook + return (Paguelo Fácil)
+                // Billing webhook (Paguelo Fácil). El return del pago es una
+                // ruta del SPA de Angular ({frontend}/billing/return), no existe
+                // en este backend.
                 .requestMatchers(
-                    "/billing/return",
                     "/api/billing/webhook/**"
                 ).permitAll()
                 // Swagger / OpenAPI (desarrollo)
