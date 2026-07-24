@@ -3,9 +3,11 @@ package com.bisioneers.medica.patient.domain;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -51,10 +53,30 @@ public interface PatientRepository extends JpaRepository<PatientEntity, UUID> {
 	 * Contar pacientes activos por tenant
 	 */
 	long countByTenantIdAndActiveTrue(UUID tenantId);
-	
+
 	/**
-     * Obtener pacientes filtrados con ID y TenantId
-     */
+	 * Obtener pacientes filtrados con ID y TenantId
+	 */
 	Optional<PatientEntity> findByIdAndTenantId(UUID id, UUID tenantId);
+
+	// ─── Soporte de importación masiva ────────────────────────────────
+
+	@Query("SELECT p.documentNumber FROM PatientEntity p " +
+			"WHERE p.tenantId = :tenantId AND p.documentNumber IS NOT NULL")
+	List<String> findAllDocumentNumbersByTenant(@Param("tenantId") UUID tenantId);
+
+	@Query("SELECT p.email FROM PatientEntity p " +
+			"WHERE p.tenantId = :tenantId AND p.email IS NOT NULL")
+	List<String> findAllEmailsByTenant(@Param("tenantId") UUID tenantId);
+
+	@Query("SELECT p.legacyExternalId FROM PatientEntity p " +
+			"WHERE p.tenantId = :tenantId AND p.legacyExternalId IS NOT NULL")
+	List<String> findAllLegacyIdsByTenant(@Param("tenantId") UUID tenantId);
+
+	@Modifying
+	@Query("UPDATE PatientEntity p SET p.active = false " +
+			"WHERE p.tenantId = :tenantId AND p.importBatchId = :batchId")
+	int deactivateByImportBatch(@Param("tenantId") UUID tenantId,
+			@Param("batchId") UUID batchId);
 
 }
