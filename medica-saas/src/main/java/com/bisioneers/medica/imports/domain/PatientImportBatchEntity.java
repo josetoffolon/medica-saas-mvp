@@ -35,7 +35,8 @@ public class PatientImportBatchEntity extends TenantScopedEntity {
 	private String fileName;
 
 	/** SHA-256 del contenido: evita re-analizar el mismo archivo por accidente. */
-	@Column(name = "file_hash", nullable = false, length = 64)
+	@Column(name = "file_hash", nullable = false, length = 64,
+			columnDefinition = "CHAR(64)")
 	private String fileHash;
 
 	@Column(name = "file_size_bytes", nullable = false)
