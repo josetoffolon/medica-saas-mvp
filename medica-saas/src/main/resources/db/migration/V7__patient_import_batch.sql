@@ -30,7 +30,7 @@ CREATE TABLE patient_import_row (
   id              BINARY(16)  NOT NULL,
   tenant_id       BINARY(16)  NOT NULL,
   batch_id        BINARY(16)  NOT NULL,
-  row_number      INT         NOT NULL,
+  `row_number`    INT         NOT NULL,
   raw_data        TEXT        NOT NULL,
   normalized_data TEXT        NULL,
   status          VARCHAR(20) NOT NULL,
