@@ -3,6 +3,8 @@ package com.bisioneers.medica.billing.pf;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.bisioneers.medica.billing.pf.dto.CreateActivityRequest;
+import io.netty.channel.ChannelOption;
+import io.netty.handler.timeout.ReadTimeoutHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,14 +14,21 @@ import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.*;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
+import reactor.netty.http.client.HttpClient;
+import reactor.netty.http.client.PrematureCloseException;
+import reactor.util.retry.Retry;
 
+import java.nio.channels.ClosedChannelException;
 import java.time.Duration;
+import java.util.concurrent.TimeoutException;
 
 @Component
 public class PagueloFacilClient {
 
 	private final WebClient webClient;
 	private final ObjectMapper objectMapper;
+	private final Duration timeout;
 	private static final Logger log = LoggerFactory.getLogger(PagueloFacilClient.class);
 
 	private static final String ACTIVITIES_PATH = "/PFManagementServices/api/v1/Activities/";
@@ -27,15 +36,26 @@ public class PagueloFacilClient {
 	public PagueloFacilClient(
 			@Value("${paguelofacil.base-url}") String baseUrl,
 			@Value("${paguelofacil.access-token}") String accessToken,
-			@Value("${paguelofacil.timeout-ms:8000}") long timeoutMs,
+			@Value("${paguelofacil.timeout-ms:30000}") long timeoutMs,
 			ObjectMapper objectMapper
 			) {
 		this.objectMapper = objectMapper;
+		this.timeout = Duration.ofMillis(timeoutMs);
+
+		// HttpClient con timeouts a nivel de socket. Sin esto, el connector
+		// por defecto no tiene connect/response timeout y el .timeout() de
+		// Reactor cancela el canal a mitad del handshake TLS -> ClosedChannelException.
+		HttpClient httpClient = HttpClient.create()
+				.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
+				.responseTimeout(this.timeout)
+				.doOnConnected(conn -> conn.addHandlerLast(
+						new ReadTimeoutHandler((int) this.timeout.getSeconds())));
+
 		this.webClient = WebClient.builder()
 				.baseUrl(baseUrl)
 				.defaultHeader(HttpHeaders.AUTHORIZATION, accessToken)
 				.defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-				.clientConnector(new ReactorClientHttpConnector())
+				.clientConnector(new ReactorClientHttpConnector(httpClient))
 				.filter(ExchangeFilterFunction.ofResponseProcessor(resp -> {
 					if (resp.statusCode().isError()) {
 						return resp.bodyToMono(String.class)
@@ -47,14 +67,24 @@ public class PagueloFacilClient {
 					return Mono.just(resp);
 				}))
 				.build();
-
-		// Timeout a nivel de llamada (por método).
-		this.timeout = Duration.ofMillis(timeoutMs);
 	}
 
-	private final Duration timeout;
+	/**
+	 * Retry para cortes de red transitorios (típicos en el sandbox de PF).
+	 * Las consultas son idempotentes de solo lectura, así que reintentar
+	 * es seguro. No reintenta errores HTTP de negocio (4xx/5xx).
+	 */
+	private static Retry transientRetry() {
+		return Retry.backoff(3, Duration.ofSeconds(2))
+				.maxBackoff(Duration.ofSeconds(10))
+				.filter(ex ->
+				ex instanceof ClosedChannelException
+				|| ex instanceof PrematureCloseException
+				|| ex instanceof TimeoutException
+				|| ex instanceof WebClientRequestException)
+				.onRetryExhaustedThrow((spec, signal) -> signal.failure());
+	}
 
-	/** Crea una Activity (pago pendiente). Devuelve el JSON completo para guardarlo y extraer idActivity. */
 	public JsonNode createActivity(CreateActivityRequest request) {
 		return webClient.post()
 				.uri(ACTIVITIES_PATH)
@@ -62,22 +92,22 @@ public class PagueloFacilClient {
 				.retrieve()
 				.bodyToMono(JsonNode.class)
 				.timeout(timeout)
+				.retryWhen(transientRetry())
+				.subscribeOn(Schedulers.boundedElastic())
 				.block();
 	}
 
-	/**
-	 * Consulta Activities por conditional.
-	 * Para validar pagado: conditional=status::2|idActivity::{id}
-	 */
 	public JsonNode queryActivities(String conditional) {
 		return webClient.get()
 				.uri(uriBuilder -> uriBuilder
-						.path(ACTIVITIES_PATH) // ojo: doc muestra sin trailing slash a veces; aquí mantenemos el path base
+						.path(ACTIVITIES_PATH)
 						.queryParam("conditional", conditional)
 						.build())
 				.retrieve()
 				.bodyToMono(JsonNode.class)
 				.timeout(timeout)
+				.retryWhen(transientRetry())
+				.subscribeOn(Schedulers.boundedElastic())
 				.block();
 	}
 
@@ -161,12 +191,14 @@ public class PagueloFacilClient {
 	public boolean isOperationPaid(String codOper) {
 		if (codOper == null || codOper.isBlank()) return false;
 		try {
-			// conditional documentado: status::2 (pagado) | idActivity/oper
 			JsonNode response = queryActivities("oper::" + codOper);
-			return isPaidActivityQuery(response);
+			boolean paid = isPaidActivityQuery(response);
+			// Log temporal de diagnóstico: ver qué devuelve PF realmente
+			log.info("Verificación PF codOper={}: paid={}, respuesta={}", codOper, paid, response);
+			return paid;
 		} catch (Exception e) {
 			log.warn("No se pudo verificar operación {} con PF: {}", codOper, e.getMessage());
-			return false; // fail-closed: si no podemos verificar, no activamos
+			return false; // fail-closed
 		}
 	}
 
