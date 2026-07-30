@@ -45,30 +45,52 @@ public class BillingPollingJob {
 	public void run() {
 		if (!enabled) return;
 
-		// 1) Buscar PENDING recientes (límite para no cargar DB)
-		List<PaymentTransactionEntity> pending = txRepo.findTop100ByStatusOrderByCreatedAtAsc("PENDING");
-
 		Instant now = Instant.now();
+
+		// 1) PENDING recientes: PF puede haber cobrado sin que llegara el webhook
+		List<PaymentTransactionEntity> pending =
+				txRepo.findTop100ByStatusOrderByCreatedAtAsc("PENDING");
+
 		for (PaymentTransactionEntity tx : pending) {
+			reconcile(tx);
 
-			// Reconciliación: si tenemos codOper, preguntar a PF si ya se pagó.
-			// markAsPaid hace la verificación server-to-server y activa si procede.
-			if (tx.getProviderRef() != null && !tx.getProviderRef().isBlank()) {
-				try {
-					billingService.markAsPaid(tx.getId(), tx.getProviderRef(), null, null);
-				} catch (Exception e) {
-					log.warn("Reconciliación falló para tx {}: {}", tx.getId(), e.getMessage());
+			if ("PENDING".equals(tx.getStatus())) {
+				Instant expiresAt = tx.getCreatedAt().plusSeconds(expiresInSeconds + graceSeconds);
+				if (now.isAfter(expiresAt)) {
+					tx.setStatus("EXPIRED");
+					txRepo.save(tx);
 				}
-				if (!"PENDING".equals(tx.getStatus())) continue; // ya resuelta
 			}
+		}
 
-			// Expirar si pasó el TTL del link + gracia
-			Instant expiresAt = tx.getCreatedAt().plusSeconds(expiresInSeconds + graceSeconds);
-			if (now.isAfter(expiresAt)) {
-				tx.setStatus("EXPIRED");
-				txRepo.save(tx);
+		// 2) Transacciones cuyo webhook aprobó pero la verificación server-to-server
+		//    falló por un corte transitorio hacia PF. El dinero pudo cobrarse, así
+		//    que reintentamos la verificación. Si PF sigue sin confirmar, quedan
+		//    en su estado y se reintentan el próximo ciclo (idempotente).
+		for (String stuck : List.of("VERIFICATION_FAILED", "UNVERIFIED", "AMOUNT_UNVERIFIED")) {
+			List<PaymentTransactionEntity> toRetry =
+					txRepo.findTop100ByStatusOrderByCreatedAtAsc(stuck);
+			for (PaymentTransactionEntity tx : toRetry) {
+				// Solo reintentar dentro de una ventana razonable; más allá,
+				// requiere revisión manual (evita reintentar indefinidamente).
+				Instant giveUpAt = tx.getCreatedAt().plusSeconds(expiresInSeconds + graceSeconds + 86_400);
+				if (now.isAfter(giveUpAt)) continue;
+				reconcile(tx);
 			}
+		}
+	}
 
+	/**
+	 * Intenta confirmar el pago contra PF. markAsPaid hace la verificación
+	 * server-to-server y activa la suscripción solo si PF confirma; es
+	 * idempotente, así que es seguro llamarlo en cada ciclo.
+	 */
+	private void reconcile(PaymentTransactionEntity tx) {
+		if (tx.getProviderRef() == null || tx.getProviderRef().isBlank()) return;
+		try {
+			billingService.markAsPaid(tx.getId(), tx.getProviderRef(), null, null);
+		} catch (Exception e) {
+			log.warn("Reconciliación falló para tx {}: {}", tx.getId(), e.getMessage());
 		}
 	}
 }
