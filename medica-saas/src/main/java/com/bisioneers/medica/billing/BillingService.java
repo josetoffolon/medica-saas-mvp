@@ -117,6 +117,17 @@ public class BillingService {
 		PaymentTransactionEntity tx = txRepo.findById(txId)
 				.orElseThrow(() -> new IllegalStateException("Transaccion no encontrada: " + txId));
 
+		// Persistir el codOper de INMEDIATO, antes de cualquier verificación.
+		// Es el identificador de la operación en PF y lo necesita el
+		// BillingPollingJob para reconciliar si la verificación falla aquí
+		// por un corte de red. Sin esto, una tx en VERIFICATION_FAILED queda
+		// con provider_ref=null y es irrecuperable.
+		if (providerRef != null && !providerRef.isBlank()
+				&& (tx.getProviderRef() == null || tx.getProviderRef().isBlank())) {
+			tx.setProviderRef(providerRef);
+			txRepo.save(tx);
+		}
+
 		// Idempotencia: ya pagada
 		if ("PAID".equalsIgnoreCase(tx.getStatus())) {
 			if (rawBody != null && !rawBody.isBlank()) {
